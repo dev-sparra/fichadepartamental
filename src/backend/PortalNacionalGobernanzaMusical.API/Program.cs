@@ -63,14 +63,16 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
     {
-        // Variables de entorno pueden venir como string simple (comma-separated).
+        // El valor de origenes llega de dos formas segun el entorno:
+        //   - Variable de entorno (Render/Plesk): un unico string escalar (uno o varios origenes separados por coma).
+        //   - appsettings.json: un array JSON (indices :0, :1, ...).
+        // OJO: un escalar de entorno NO sobrescribe los indices de un array JSON (son claves distintas),
+        // por eso el array local "http://localhost:4200" secuestraba Get<string[]>() y el override de
+        // despliegue nunca se aplicaba. Priorizamos el escalar para que la variable de entorno SIEMPRE gane.
         var originsSection = builder.Configuration.GetSection("Cors:AllowedOrigins");
-        var origins = originsSection.Get<string[]>();
-        if (origins is null || origins.Length == 0)
-        {
-            var raw = originsSection.Value ?? builder.Configuration["Cors:AllowedOrigins"] ?? string.Empty;
-            origins = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        }
+        var origins = !string.IsNullOrWhiteSpace(originsSection.Value)
+            ? originsSection.Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : originsSection.Get<string[]>() ?? Array.Empty<string>();
 
         Console.WriteLine($"[CORS-DEBUG] originsSection.Value='{originsSection.Value}'");
         Console.WriteLine($"[CORS-DEBUG] builder.Configuration['Cors:AllowedOrigins']='{builder.Configuration["Cors:AllowedOrigins"]}'");
