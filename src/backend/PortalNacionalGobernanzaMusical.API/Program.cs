@@ -85,9 +85,11 @@ builder.Services.AddCors(options =>
         }
         else
         {
-            policy.WithOrigins(origins)
+            // SetIsOriginAllowed: case-insensitive match (browsers lowercase host pero el scheme puede variar)
+            policy.SetIsOriginAllowed(host => origins.Any(o => string.Equals(o, host, StringComparison.OrdinalIgnoreCase)))
                 .AllowAnyHeader()
-                .AllowAnyMethod();
+                .AllowAnyMethod()
+                .SetPreflightMaxAge(TimeSpan.FromMinutes(10));
         }
     });
 });
@@ -111,6 +113,9 @@ if (!app.Environment.IsDevelopment())
     app.UseStaticFiles();
 }
 
+// Orden correcto: UseRouting → UseCors → UseAuthentication → UseAuthorization → MapControllers.
+// Sin UseRouting explicito, MapControllers inyecta routing DESPUES de UseCors y CORS no matchea endpoint.
+app.UseRouting();
 app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseAuthorization();
