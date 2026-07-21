@@ -36,8 +36,6 @@ services:
   - type: web
     name: portal-gobernanza
     runtime: static
-    plan: free
-    region: oregon
     branch: main
     rootDir: src/frontend/portal-gobernanza-musical
     buildCommand: npm install && npm run build -- --configuration render
