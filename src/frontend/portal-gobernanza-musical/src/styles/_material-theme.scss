@@ -1,0 +1,128 @@
+@use '@angular/material' as mat;
+
+$_primary: (
+  0: #000000,
+  10: #150c36,
+  20: #23184b,
+  30: #281e52,
+  40: #3b2d6e,
+  50: #4e3d8a,
+  60: #6250a6,
+  70: #7865c2,
+  80: #8e7cde,
+  90: #b2a2f5,
+  95: #d4cafe,
+  98: #ede8ff,
+  99: #f6f3ff,
+  100: #ffffff,
+);
+
+$_secondary: (
+  0: #000000,
+  10: #1a113b,
+  20: #2f235c,
+  30: #3e2f75,
+  40: #4b3c8c,
+  50: #5f4ea3,
+  60: #7361ba,
+  70: #8977d1,
+  80: #9f8ee8,
+  90: #b6a6ff,
+  95: #d6cbff,
+  98: #ede7ff,
+  99: #f7f4ff,
+  100: #ffffff,
+);
+
+$_tertiary: (
+  0: #000000,
+  10: #002019,
+  20: #00382d,
+  30: #005142,
+  40: #006b58,
+  50: #00876f,
+  60: #00a387,
+  70: #20c0a0,
+  80: #4edcbb,
+  90: #73f9d5,
+  95: #b4ffe7,
+  98: #e2fff2,
+  99: #f2fff8,
+  100: #ffffff,
+);
+
+$_neutral: (
+  0: #000000,
+  10: #1b1b21,
+  20: #303036,
+  30: #47474d,
+  40: #5f5f65,
+  50: #78787e,
+  60: #929298,
+  70: #adadb3,
+  80: #c8c8ce,
+  90: #e4e4ea,
+  95: #f3f2f8,
+  98: #fcfaff,
+  99: #fffbff,
+  100: #ffffff,
+);
+
+$_neutral-variant: (
+  0: #000000,
+  10: #1b1b25,
+  20: #30303b,
+  30: #474752,
+  40: #5f5f6a,
+  50: #777783,
+  60: #91919e,
+  70: #acacb9,
+  80: #c8c7d4,
+  90: #e4e3f1,
+  95: #f2f1ff,
+  98: #fcf9ff,
+  99: #fffbff,
+  100: #ffffff,
+);
+
+$_error: (
+  0: #000000,
+  10: #410002,
+  20: #690005,
+  30: #93000a,
+  40: #ba1a1a,
+  50: #de3730,
+  60: #ff5449,
+  70: #ff897d,
+  80: #ffb4ab,
+  90: #ffdad6,
+  95: #ffedea,
+  98: #fff8f7,
+  99: #fffbff,
+  100: #ffffff,
+);
+
+html {
+  color-scheme: light;
+
+  @include mat.theme(
+    (
+      color: (
+        primary: $_primary,
+        secondary: $_secondary,
+        tertiary: $_tertiary,
+        neutral: $_neutral,
+        neutral-variant: $_neutral-variant,
+        error: $_error,
+      ),
+      typography: (
+        plain-family: 'Nunito Sans',
+        brand-family: 'Nunito Sans',
+        bold-weight: 700,
+        medium-weight: 500,
+        regular-weight: 400,
+      ),
+      density: 0,
+    )
+  );
+}

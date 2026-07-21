@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\PortalNacionalGobernanzaMusical.Application\PortalNacionalGobernanzaMusical.Application.csproj" />
+    <ProjectReference Include="..\PortalNacionalGobernanzaMusical.Domain\PortalNacionalGobernanzaMusical.Domain.csproj" />
+    <ProjectReference Include="..\PortalNacionalGobernanzaMusical.Infrastructure\PortalNacionalGobernanzaMusical.Infrastructure.csproj" />
+    <ProjectReference Include="..\PortalNacionalGobernanzaMusical.Persistence\PortalNacionalGobernanzaMusical.Persistence.csproj" />
+    <ProjectReference Include="..\PortalNacionalGobernanzaMusical.Shared\PortalNacionalGobernanzaMusical.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.8" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

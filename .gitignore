@@ -1,0 +1,54 @@
+# ─── .NET ───
+[Bb]in/
+[Oo]bj/
+[Aa]rtifacts/
+publish-backend/
+publish-frontend/
+*.user
+*.suo
+*.userprefs
+*.cache
+*.log
+*.pidb
+*.swp
+*.swo
+*.rej
+*.orig
+
+# Visual Studio
+.vs/
+.vscode/
+.idea/
+
+# Node / Angular
+node_modules/
+dist/
+tmp/
+out-tsc/
+.angular/cache/
+coverage/
+connect.lock
+npm-debug.log
+yarn-error.log
+__screenshots__/
+.sass-cache/
+
+# OS
+.Ds_Store
+Thumbs.db
+Desktop.ini
+
+# Secretos / env locales
+.env
+.env.local
+*.env.local
+deploy/env/.env.staging.local
+
+# Pencil / IDEs agents
+.agents/*
+!.agents/skills
+.claude/*
+skills-lock.json
+
+# Build de Pencil export
+*.html.export

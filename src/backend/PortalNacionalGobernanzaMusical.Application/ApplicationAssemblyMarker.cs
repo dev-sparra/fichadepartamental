@@ -1,0 +1,3 @@
+namespace PortalNacionalGobernanzaMusical.Application;
+
+public sealed class ApplicationAssemblyMarker;

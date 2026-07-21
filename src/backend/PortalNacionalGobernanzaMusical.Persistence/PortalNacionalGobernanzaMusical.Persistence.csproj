@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\PortalNacionalGobernanzaMusical.Application\PortalNacionalGobernanzaMusical.Application.csproj" />
+    <ProjectReference Include="..\PortalNacionalGobernanzaMusical.Domain\PortalNacionalGobernanzaMusical.Domain.csproj" />
+    <ProjectReference Include="..\PortalNacionalGobernanzaMusical.Shared\PortalNacionalGobernanzaMusical.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.8" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

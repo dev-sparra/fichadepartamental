@@ -1,0 +1,100 @@
+@host = http://localhost:5100
+
+### Liveness barato (sin auth)
+GET {{host}}/health
+
+### Readiness con verificación de MySQL (incluye el tag "database")
+GET {{host}}/health/ready
+
+### Login (sin auth) — copia el accessToken devuelto en @token
+# @name login
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@mincultura.gov.co",
+  "password": "changeme"
+}
+
+### Token JWT para las peticiones protegidas.
+# Reemplaza el valor por el accessToken devuelto por /api/auth/login.
+@token = {{login.response.body.accessToken}}
+
+### Blueprint canónico de la ficha (metadatos del formulario dinámico)
+GET {{host}}/api/governance/blueprint
+Authorization: Bearer {{token}}
+
+### Lista de fichas departamentales (summary)
+GET {{host}}/api/governance/fichas
+Authorization: Bearer {{token}}
+
+### Detalle de una ficha por ID (reemplaza <id>)
+GET {{host}}/api/governance/fichas/<id>
+Authorization: Bearer {{token}}
+
+### Crear una ficha (devuelve 201 Created con Location)
+POST {{host}}/api/governance/fichas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "fechaLevantamiento": "2026-07-10",
+  "departmentId": 1,
+  "municipalityId": null,
+  "responsableRegistro": "Gestor de prueba",
+  "regionOcadOptionId": null,
+  "observaciones": null,
+  "informationSourceIds": []
+}
+
+### Reemplazar oportunidades de una ficha
+PUT {{host}}/api/governance/fichas/<id>/opportunities
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+[
+  {
+    "situacionIdentificada": "Descripción de la oportunidad",
+    "componenteOtrasDependenciasEntidades": null,
+    "aliadosYCreyentes": null,
+    "territorioInfluencia": null,
+    "priorityLevelOptionId": null,
+    "descripcionAdicional": null
+  }
+]
+
+### Eliminar una ficha (204 No Content si es Admin; 403 en caso contrario)
+DELETE {{host}}/api/governance/fichas/<id>
+Authorization: Bearer {{token}}
+
+### Indicadores: registros de avance
+GET {{host}}/api/indicators/records
+Authorization: Bearer {{token}}
+
+### Indicadores: detalle de registros
+GET {{host}}/api/indicators/details
+Authorization: Bearer {{token}}
+
+### Provisionar hoja de indicadores (idempotente) para depto 1 y año 2026
+POST {{host}}/api/indicators/worksheet
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "departmentId": 1,
+  "year": 2026
+}
+
+### Actualizar un registro de indicador por ID
+PUT {{host}}/api/indicators/records/<id>
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "source": "Sistema de seguimiento",
+  "generalObservations": "Avance reportado",
+  "monthlyProgresses": [
+    { "quantitativeAdvance": 1.5, "detail": "Enero" },
+    { "quantitativeAdvance": null, "detail": null }
+  ]
+}

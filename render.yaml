@@ -1,0 +1,51 @@
+# Render Blueprint - Portal Nacional Gobernanza Musical
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  # ─── BACKEND (ASP.NET Core 9 via Docker) ───────────────────────────────
+  - type: web
+    name: portal-gobernanza-api
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: main
+    rootDir: ./
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Staging
+      - key: ASPNETCORE_URLS
+        value: http://+:8080
+      - key: ConnectionStrings__DefaultConnection
+        sync: false
+      - key: Jwt__Issuer
+        value: PortalNacionalGobernanzaMusical
+      - key: Jwt__Audience
+        value: PortalNacionalGobernanzaMusical.Client
+      - key: Jwt__SecretKey
+        sync: false
+      - key: Jwt__AccessTokenMinutes
+        value: "60"
+      - key: Jwt__RefreshTokenDays
+        value: "7"
+      - key: Cors__AllowedOrigins
+        value: https://portal-gobernanza.onrender.com
+
+  # ─── FRONTEND (Angular Static Site) ────────────────────────────────────
+  - type: web
+    name: portal-gobernanza
+    runtime: static
+    plan: free
+    region: oregon
+    branch: main
+    rootDir: src/frontend/portal-gobernanza-musical
+    buildCommand: npm install && npm run build -- --configuration render
+    staticPublishPath: ./dist/portal-gobernanza-musical/browser
+    envVars:
+      - key: NODE_VERSION
+        value: "20.11.0"
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
