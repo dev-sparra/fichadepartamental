@@ -105,9 +105,13 @@ if (app.Environment.IsDevelopment())
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 
+Console.WriteLine($"[ENV-DEBUG] EnvironmentName='{app.Environment.EnvironmentName}'");
+Console.WriteLine($"[ENV-DEBUG] IsStaging={app.Environment.IsStaging()} IsDevelopment={app.Environment.IsDevelopment()} IsProduction={app.Environment.IsProduction()}");
+
 // Render/Cloudflare terminan HTTPS en el edge; el redirect interno fuerza 307 que el navegador
-// reintentaria eliminando headers CORS volatilizando el preflight. En otros hostings (Plesk) se mantiene.
-if (!app.Environment.IsStaging())
+// reintentaria eliminando headers CORS volatilizando el preflight. En otros hostings (Plesk) se mantiene
+// activo solo en Production para forzar HTTPS estricto.
+if (app.Environment.IsProduction())
 {
     app.UseHttpsRedirection();
 }
