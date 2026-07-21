@@ -63,7 +63,15 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
     {
-        policy.WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>())
+        // Variables de entorno pueden venir como string simple (comma-separated).
+        var originsSection = builder.Configuration.GetSection("Cors:AllowedOrigins");
+        var origins = originsSection.Get<string[]>();
+        if (origins is null || origins.Length == 0)
+        {
+            var raw = originsSection.Value ?? builder.Configuration["Cors:AllowedOrigins"] ?? string.Empty;
+            origins = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+        policy.WithOrigins(origins)
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
