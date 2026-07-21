@@ -42,7 +42,7 @@ services:
     staticPublishPath: ./dist/portal-gobernanza-musical/browser
     envVars:
       - key: NODE_VERSION
-        value: "20.11.0"
+        value: "20.19.0"
     routes:
       - type: rewrite
         source: /*
