@@ -47,3 +47,14 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
+  # ─── KEEP-API-WARM (Cron Job) ─────────────────────────────────────────
+  # Pinge el backend cada 10 minutos para evitar el sleep del free tier.
+  - type: cron
+    name: portal-gobernanza-api-keepwarm
+    runtime: docker
+    schedule: "*/10 * * * *"
+    branch: main
+    dockerfilePath: ./Dockerfile.keepwarm
+    envVars:
+      - key: HEALTH_URL
+        value: https://portal-gobernanza-api.onrender.com/health

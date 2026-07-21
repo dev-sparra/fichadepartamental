@@ -1,0 +1,4 @@
+FROM alpine:3.19
+RUN apk add --no-cache curl
+# $HEALTH_URL llega desde envVars del cron en render.yaml
+CMD ["sh", "-c", "curl -fsS -m 30 \"$HEALTH_URL\" || true"]
