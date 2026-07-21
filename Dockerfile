@@ -2,6 +2,9 @@
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
+# Copiar el .xlsm embebido como EmbeddedResource desde docs/ (referenciado por el csproj con ..\..\..\)
+COPY docs/ficha_departamental_gobernanza.xlsm /docs/ficha_departamental_gobernanza.xlsm
+
 # Copiar solo los .csproj primero (mejor cache de Docker)
 COPY src/backend/PortalNacionalGobernanzaMusical.API/PortalNacionalGobernanzaMusical.API.csproj ./PortalNacionalGobernanzaMusical.API/
 COPY src/backend/PortalNacionalGobernanzaMusical.Application/PortalNacionalGobernanzaMusical.Application.csproj ./PortalNacionalGobernanzaMusical.Application/
