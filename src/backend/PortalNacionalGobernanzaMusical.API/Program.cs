@@ -104,7 +104,13 @@ if (app.Environment.IsDevelopment())
 
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
-app.UseHttpsRedirection();
+
+// Render/Cloudflare terminan HTTPS en el edge; el redirect interno fuerza 307 que el navegador
+// reintentaria eliminando headers CORS volatilizando el preflight. En otros hostings (Plesk) se mantiene.
+if (!app.Environment.IsStaging())
+{
+    app.UseHttpsRedirection();
+}
 
 // Servir frontend Angular desde wwwroot en entornos no-Development.
 // En Development el frontend corre por separado con `ng serve` en http://localhost:4200.
