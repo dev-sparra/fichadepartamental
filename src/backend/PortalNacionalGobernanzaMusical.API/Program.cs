@@ -71,9 +71,24 @@ builder.Services.AddCors(options =>
             var raw = originsSection.Value ?? builder.Configuration["Cors:AllowedOrigins"] ?? string.Empty;
             origins = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
-        policy.WithOrigins(origins)
-            .AllowAnyHeader()
-            .AllowAnyMethod();
+
+        Console.WriteLine($"[CORS-DEBUG] originsSection.Value='{originsSection.Value}'");
+        Console.WriteLine($"[CORS-DEBUG] builder.Configuration['Cors:AllowedOrigins']='{builder.Configuration["Cors:AllowedOrigins"]}'");
+        Console.WriteLine($"[CORS-DEBUG] Parsed origins count={origins.Length}: {string.Join(" | ", origins)}");
+
+        if (origins.Length == 0)
+        {
+            Console.WriteLine("[CORS-DEBUG] No origins configured -> AllowAnyOrigin (temporal)");
+            policy.AllowAnyOrigin()
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+        }
+        else
+        {
+            policy.WithOrigins(origins)
+                .AllowAnyHeader()
+                .AllowAnyMethod();
+        }
     });
 });
 
