@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using PortalNacionalGobernanzaMusical.Application.Common;
 
 namespace PortalNacionalGobernanzaMusical.API.Middleware;
 
@@ -25,6 +26,14 @@ internal sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) :
         Exception exception,
         CancellationToken cancellationToken)
     {
+        // Las validaciones de captura ya traen mensajes redactados para el usuario: se devuelven
+        // con el detalle por campo para que el formulario pueda señalar qué corregir.
+        if (exception is DomainValidationException validationException)
+        {
+            await WriteValidationProblemAsync(httpContext, validationException, cancellationToken);
+            return true;
+        }
+
         if (!Mappings.TryGetValue(exception.GetType(), out var mapping))
         {
             return false; // Deja que el handler por defecto gestione los 500 y otros.
@@ -48,5 +57,34 @@ internal sealed class ApiExceptionHandler(ILogger<ApiExceptionHandler> logger) :
 
         await httpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
         return true;
+    }
+
+    /// <summary>
+    /// Responde 400 con el resumen funcional en <c>detalleResumen</c> (el campo que lee el
+    /// frontend) y la lista de campos por corregir en <c>errores</c>.
+    /// </summary>
+    private static async Task WriteValidationProblemAsync(
+        HttpContext httpContext,
+        DomainValidationException exception,
+        CancellationToken cancellationToken)
+    {
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status400BadRequest,
+            Title = "Datos por corregir",
+            Type = "https://httpstatuses.io/400",
+            Detail = exception.Summary,
+            Instance = httpContext.Request.Path
+        };
+
+        problem.Extensions["detalleResumen"] = exception.Summary;
+        problem.Extensions["errores"] = exception.Errors
+            .Select(error => new { campo = error.Field, etiqueta = error.FieldLabel, mensaje = error.Message })
+            .ToArray();
+
+        httpContext.Response.StatusCode = StatusCodes.Status400BadRequest;
+        httpContext.Response.ContentType = "application/problem+json";
+
+        await httpContext.Response.WriteAsJsonAsync(problem, cancellationToken);
     }
 }

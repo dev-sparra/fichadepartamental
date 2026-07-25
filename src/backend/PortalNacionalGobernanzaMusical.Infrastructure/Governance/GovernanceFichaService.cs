@@ -88,6 +88,8 @@ public sealed class GovernanceFichaService(
 
     public async Task<GovernanceFichaDetailDto> CreateFichaAsync(UpdateGovernanceFichaRequest request, CancellationToken cancellationToken = default)
     {
+        GovernanceRequestValidation.EnsureValid(request);
+
         var ficha = new FichaDepartamental
         {
             FechaLevantamiento = request.FechaLevantamiento,
@@ -124,6 +126,8 @@ public sealed class GovernanceFichaService(
 
     public async Task<GovernanceFichaDetailDto> UpdateFichaAsync(Guid id, UpdateGovernanceFichaRequest request, CancellationToken cancellationToken = default)
     {
+        GovernanceRequestValidation.EnsureValid(request);
+
         var ficha = await dbContext.FichasDepartamentales
             .Include(x => x.FuentesInformacion)
             .SingleAsync(x => x.Id == id, cancellationToken);
@@ -313,6 +317,7 @@ public sealed class GovernanceFichaService(
 
     public async Task<IReadOnlyCollection<GovernancePnmcAxisDto>> ReplacePnmcAxesAsync(Guid fichaId, IReadOnlyCollection<GovernancePnmcAxisDto> request, CancellationToken cancellationToken = default)
     {
+        GovernanceRequestValidation.EnsureValid(request);
         await GetFichaWithAccessCheckAsync(fichaId, cancellationToken);
         var before = await GetPnmcAxesAsync(fichaId, cancellationToken);
         var existingIds = await dbContext.EjesPnmc.Where(x => x.FichaDepartamentalId == fichaId).Select(x => x.Id).ToListAsync(cancellationToken);
@@ -374,6 +379,7 @@ public sealed class GovernanceFichaService(
 
     public async Task<IReadOnlyCollection<GovernanceActorDto>> ReplaceActorsAsync(Guid fichaId, IReadOnlyCollection<GovernanceActorDto> request, CancellationToken cancellationToken = default)
     {
+        GovernanceRequestValidation.EnsureValid(request);
         await GetFichaWithAccessCheckAsync(fichaId, cancellationToken);
         var before = await GetActorsAsync(fichaId, cancellationToken);
         var existingIds = await dbContext.Actores.Where(x => x.FichaDepartamentalId == fichaId).Select(x => x.Id).ToListAsync(cancellationToken);

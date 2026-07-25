@@ -196,6 +196,45 @@ a {
   --mat-form-field-filled-container-shape: var(--radius-lg);
 }
 
+/* ═══════════════════════════════════════════
+   ETIQUETAS DE CAMPOS (labels flotantes)
+   ═══════════════════════════════════════════
+   Con `appearance="outline"` el label flota sobre el borde superior del campo y sobresale
+   unos píxeles por encima de su caja. Cualquier contenedor que recorte su contenido
+   (`overflow: hidden`) corta ese texto: era el caso del primer campo de cada sección de la
+   ficha, porque el stepper vertical de Material recorta el contenido para animar el colapso.
+   Se libera el recorte en el paso activo —igual que Material hace en el stepper horizontal—
+   y se reserva espacio arriba para que el label siempre se lea completo. */
+
+.mat-vertical-content-container.mat-vertical-content-container-active
+  > .mat-vertical-stepper-content {
+  overflow: visible;
+}
+
+.mat-vertical-content {
+  /* Espacio para el label flotante del primer campo del paso. */
+  padding-top: var(--space-2);
+}
+
+/* Misma protección para campos que abren una tarjeta, un panel o un diálogo. */
+.mat-mdc-card-content > .mat-mdc-form-field:first-child,
+.mat-expansion-panel-body > .mat-mdc-form-field:first-child,
+.mat-mdc-dialog-content > .mat-mdc-form-field:first-child {
+  margin-top: var(--space-2);
+}
+
+/* Los mensajes de error y de ayuda ocupan siempre el mismo alto: al aparecer no desplazan
+   los campos siguientes ni desalinean la cuadrícula del formulario. */
+.mat-mdc-form-field-subscript-wrapper {
+  min-height: 1.25rem;
+}
+
+.mat-mdc-form-field-error,
+.mat-mdc-form-field-hint {
+  font-size: var(--font-size-caption);
+  line-height: 1.35;
+}
+
 .mat-mdc-button,
 .mat-mdc-unelevated-button,
 .mat-mdc-outlined-button,

@@ -22,9 +22,16 @@ public sealed class ImportsController(IWorkbookImportService workbookImportServi
     [RequestSizeLimit(50_000_000)]
     public async Task<ActionResult<ImportWorkbookResult>> ImportExcelAsync(IFormFile file, CancellationToken cancellationToken)
     {
+        // Cualquier otro motivo de rechazo (extensión, nombre, hojas o columnas) se registra como
+        // lote rechazado con incidencias redactadas, para que el usuario vea el detalle en pantalla.
         if (file is null || file.Length == 0)
         {
-            return BadRequest("Debe adjuntarse un archivo Excel válido.");
+            return BadRequest(new ProblemDetails
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "No se adjuntó ningún archivo",
+                Detail = $"Seleccione el archivo oficial {ImportFileRules.OfficialFileName} diligenciado y vuelva a intentarlo."
+            });
         }
 
         await using var stream = file.OpenReadStream();

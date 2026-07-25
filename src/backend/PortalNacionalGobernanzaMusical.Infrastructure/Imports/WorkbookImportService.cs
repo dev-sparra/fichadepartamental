@@ -13,6 +13,8 @@ public sealed class WorkbookImportService(
     ApplicationDbContext dbContext,
     ICatalogLookupService catalogLookupService,
     IFichaBlueprintProvider blueprintProvider,
+    WorkbookStructureValidator structureValidator,
+    IImportIssueNarrator issueNarrator,
     ICurrentUserService currentUserService) : IWorkbookImportService
 {
     private static readonly string[] MultiSelectionSeparator = [", "];
@@ -25,17 +27,80 @@ public sealed class WorkbookImportService(
     {
         ArgumentNullException.ThrowIfNull(command);
 
+        // Etapa 1-3 del flujo: el lote nace "en validación" y solo pasa a "procesando" cuando el
+        // archivo demuestra ser la Ficha Departamental oficial (nombre, extensión y estructura).
         var batch = new ImportBatch
         {
             FileName = command.FileName,
             ContentType = command.ContentType,
             FileSizeBytes = command.FileSizeBytes,
-            Status = "Processing"
+            Status = ImportBatchStatuses.Validating
         };
 
         dbContext.ImportBatches.Add(batch);
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        var rejections = ValidateFile(command, out var workbook);
+
+        using (workbook)
+        {
+            if (rejections.Count > 0)
+            {
+                return await RejectBatchAsync(batch, rejections, cancellationToken);
+            }
+
+            batch.Status = ImportBatchStatuses.Processing;
+            return await ProcessWorkbookAsync(batch, workbook!, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Etapas 2 y 3 del flujo: formato del archivo (nombre, extensión, tamaño y legibilidad) y
+    /// estructura del libro (hojas y encabezados del Blueprint). Devuelve el libro abierto solo si
+    /// no hay motivos de rechazo.
+    /// </summary>
+    private IReadOnlyList<ImportFileRejection> ValidateFile(ImportWorkbookCommand command, out XLWorkbook? workbook)
+    {
+        workbook = null;
+
+        var rejections = ImportFileRules.Validate(command.FileName, command.FileSizeBytes).ToList();
+        if (rejections.Count > 0)
+        {
+            return rejections;
+        }
+
+        try
+        {
+            workbook = new XLWorkbook(command.FileStream);
+        }
+        catch (Exception ex)
+        {
+            // El detalle técnico se guarda como contexto de soporte, nunca como mensaje al usuario.
+            rejections.Add(new ImportFileRejection(
+                ImportIssueCodes.FileNotReadable,
+                "El archivo no pudo abrirse: no es un libro de Excel válido o está dañado.",
+                $"El archivo oficial {ImportFileRules.OfficialFileName} guardado desde Excel.",
+                "Abra el archivo en Excel, guárdelo de nuevo como \"Libro de Excel habilitado para macros (*.xlsm)\" y vuelva a cargarlo.",
+                command.FileName,
+                TechnicalDetail: Describe(ex)));
+
+            return rejections;
+        }
+
+        var structureRejections = structureValidator.Validate(workbook);
+        if (structureRejections.Count > 0)
+        {
+            workbook.Dispose();
+            workbook = null;
+            rejections.AddRange(structureRejections);
+        }
+
+        return rejections;
+    }
+
+    /// <summary>Etapas 4 a 7: lectura a staging, validación de datos y materialización de la ficha.</summary>
+    private async Task<ImportWorkbookResult> ProcessWorkbookAsync(ImportBatch batch, XLWorkbook workbook, CancellationToken cancellationToken)
+    {
         var issues = new List<ImportValidationIssue>();
         var validRows = 0;
         var invalidRows = 0;
@@ -45,7 +110,6 @@ public sealed class WorkbookImportService(
         try
         {
             var snapshot = await catalogLookupService.GetSnapshotAsync(cancellationToken);
-            using var workbook = new XLWorkbook(command.FileStream);
 
             var identifications = ExtractIdentificationRows(workbook, batch.Id);
             var diagnostics = ExtractDiagnosticRows(workbook, batch.Id);
@@ -71,22 +135,42 @@ public sealed class WorkbookImportService(
             ValidateIndicators(indicators, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
             ValidateIndicatorDetails(indicatorDetails, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
 
-            if (issues.All(x => x.Severity != "Error"))
+            if (issues.All(x => x.Severity != ImportIssueCodes.SeverityError))
             {
-                persistedRecords = await PersistGovernanceDataAsync(
-                    identifications,
-                    diagnostics,
-                    opportunities,
-                    pnmcAxes,
-                    actors,
-                    indicators,
-                    indicatorDetails,
-                    issues,
-                    batch.Id,
-                    cancellationToken);
+                try
+                {
+                    persistedRecords = await PersistGovernanceDataAsync(
+                        identifications,
+                        diagnostics,
+                        opportunities,
+                        pnmcAxes,
+                        actors,
+                        indicators,
+                        indicatorDetails,
+                        issues,
+                        batch.Id,
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    // Si falla al guardar, el lote no se marca como rechazado: parte de la ficha
+                    // puede haber quedado guardada y el usuario debe saber qué sección revisar.
+                    issues.Add(CreateIssue(
+                        batch.Id,
+                        ImportIssueCodes.SeverityError,
+                        "Identificación",
+                        null,
+                        null,
+                        ImportIssueCodes.PersistSectionError,
+                        "No fue posible guardar la información de la ficha departamental.",
+                        null,
+                        new ImportIssueContext { TechnicalDetail = Describe(ex) }));
+                }
             }
 
-            batch.Status = issues.Any(x => x.Severity == "Error") ? "CompletedWithErrors" : "Completed";
+            batch.Status = ImportStatusCatalog.ResolveFinalStatus(
+                issues.Any(x => x.Severity == ImportIssueCodes.SeverityError),
+                issues.Any(x => x.Severity == ImportIssueCodes.SeverityWarning));
             batch.ValidRowCount = validRows;
             batch.InvalidRowCount = invalidRows;
             batch.WarningCount = warningRows;
@@ -109,17 +193,22 @@ public sealed class WorkbookImportService(
         }
         catch (Exception ex)
         {
-            batch.Status = "Failed";
+            // Falla al leer o validar el libro: no se escribió ningún dato de gobernanza, así que
+            // el lote se rechaza. El usuario recibe un mensaje funcional y el detalle de la
+            // excepción queda en el contexto de la incidencia, solo para soporte.
+            batch.Status = ImportBatchStatuses.Rejected;
             batch.CompletedAtUtc = DateTime.UtcNow;
 
-            // Incluye el tipo de excepción y el InnerException para que el usuario pueda
-            // ver exactamente qué salió mal (p. ej. "InvalidOperationException: Sequence
-            // contains no elements" en lugar de solo "Sequence contains no elements").
-            var detail = ex.InnerException is not null
-                ? $"{ex.GetType().Name}: {ex.Message} → {ex.InnerException.Message}"
-                : $"{ex.GetType().Name}: {ex.Message}";
-
-            issues.Add(CreateIssue(batch.Id, "Error", "Workbook", null, null, "IMPORT_EXCEPTION", detail, null));
+            issues.Add(CreateIssue(
+                batch.Id,
+                ImportIssueCodes.SeverityError,
+                "Archivo",
+                null,
+                null,
+                ImportIssueCodes.ImportException,
+                "No fue posible procesar el archivo. La información no se importó.",
+                null,
+                new ImportIssueContext { TechnicalDetail = Describe(ex) }));
         }
 
         if (issues.Count > 0)
@@ -129,38 +218,115 @@ public sealed class WorkbookImportService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
+        return BuildResult(batch, issues);
+    }
+
+    /// <summary>
+    /// Cierra el lote como rechazado: no se escribe ningún dato de gobernanza y las incidencias se
+    /// guardan ya redactadas para el usuario.
+    /// </summary>
+    private async Task<ImportWorkbookResult> RejectBatchAsync(
+        ImportBatch batch,
+        IReadOnlyList<ImportFileRejection> rejections,
+        CancellationToken cancellationToken)
+    {
+        batch.Status = ImportBatchStatuses.Rejected;
+        batch.CompletedAtUtc = DateTime.UtcNow;
+        batch.ValidRowCount = 0;
+        batch.InvalidRowCount = 0;
+        batch.WarningCount = 0;
+        batch.PersistedRecordCount = 0;
+
+        var issues = rejections.Select(rejection => CreateIssue(
+            batch.Id,
+            ImportIssueCodes.SeverityError,
+            rejection.SheetName,
+            rejection.RowNumber,
+            rejection.CellReference,
+            rejection.Code,
+            rejection.Message,
+            rejection.RawValue,
+            new ImportIssueContext
+            {
+                Expected = rejection.Expected,
+                HowToFix = rejection.HowToFix,
+                TechnicalDetail = rejection.TechnicalDetail
+            })).ToList();
+
+        dbContext.ImportValidationIssues.AddRange(issues);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return BuildResult(batch, issues);
+    }
+
+    private ImportWorkbookResult BuildResult(ImportBatch batch, IReadOnlyCollection<ImportValidationIssue> issues)
+    {
+        var status = ImportStatusCatalog.Resolve(batch.Status);
+
         return new ImportWorkbookResult(
             batch.Id,
             batch.Status,
+            status.Label,
+            status.Description,
+            status.NextStep,
+            status.Tone,
+            batch.Status != ImportBatchStatuses.Rejected && batch.Status != ImportBatchStatuses.Failed,
             batch.ValidRowCount,
             batch.InvalidRowCount,
             batch.WarningCount,
+            batch.PersistedRecordCount,
             issues.Select(MapIssue).ToArray());
     }
 
     public async Task<IReadOnlyCollection<ImportBatchSummaryDto>> GetBatchesAsync(CancellationToken cancellationToken = default)
     {
-        return await dbContext.ImportBatches
+        var batches = await dbContext.ImportBatches
+            .AsNoTracking()
             .OrderByDescending(x => x.StartedAtUtc)
-            .Select(x => new ImportBatchSummaryDto(
+            .Select(x => new
+            {
                 x.Id,
                 x.FileName,
                 x.Status,
                 x.ValidRowCount,
                 x.InvalidRowCount,
                 x.WarningCount,
+                x.PersistedRecordCount,
                 x.StartedAtUtc,
-                x.CompletedAtUtc))
+                x.CompletedAtUtc
+            })
             .ToArrayAsync(cancellationToken);
+
+        return batches.Select(batch =>
+        {
+            var status = ImportStatusCatalog.Resolve(batch.Status);
+            return new ImportBatchSummaryDto(
+                batch.Id,
+                batch.FileName,
+                batch.Status,
+                status.Label,
+                status.Description,
+                status.NextStep,
+                status.Tone,
+                batch.ValidRowCount,
+                batch.InvalidRowCount,
+                batch.WarningCount,
+                batch.PersistedRecordCount,
+                batch.StartedAtUtc,
+                batch.CompletedAtUtc);
+        }).ToArray();
     }
 
     public async Task<IReadOnlyCollection<ImportValidationIssueDto>> GetIssuesAsync(Guid importBatchId, CancellationToken cancellationToken = default)
     {
-        return await dbContext.ImportValidationIssues
+        var issues = await dbContext.ImportValidationIssues
+            .AsNoTracking()
             .Where(x => x.ImportBatchId == importBatchId)
-            .OrderBy(x => x.SheetName)
+            // Primero lo que impide la importación, luego lo que solo hay que revisar.
+            .OrderByDescending(x => x.Severity == ImportIssueCodes.SeverityError)
+            .ThenBy(x => x.SheetName)
             .ThenBy(x => x.RowNumber)
-            .Select(x => new ImportValidationIssueDto(
+            .Select(x => new ImportIssueSource(
                 x.Id,
                 x.Severity,
                 x.SheetName,
@@ -168,8 +334,11 @@ public sealed class WorkbookImportService(
                 x.CellReference,
                 x.ErrorCode,
                 x.Message,
-                x.RawValue))
+                x.RawValue,
+                x.ContextJson))
             .ToArrayAsync(cancellationToken);
+
+        return issues.Select(issueNarrator.Narrate).ToArray();
     }
 
     public async Task DeleteBatchAsync(Guid batchId, CancellationToken cancellationToken = default)
@@ -921,15 +1090,22 @@ public sealed class WorkbookImportService(
             var phoneMaxLength = _phoneRule?.MaxLength ?? 20;
             if (!ActorContactValidation.IsPhoneLengthValid(row.NumeroContacto, phoneMinLength, phoneMaxLength))
             {
-                issues.Add(CreateIssue(batchId, "Warning", "Actores", row.SourceRowNumber, "F" + row.SourceRowNumber, "ACTOR_PHONE_LENGTH", $"Número de contacto debe tener entre {phoneMinLength} y {phoneMaxLength} caracteres (validación del Excel).", row.NumeroContacto));
+                issues.Add(CreateIssue(batchId, ImportIssueCodes.SeverityWarning, "Actores", row.SourceRowNumber, "F" + row.SourceRowNumber, ImportIssueCodes.ActorPhoneLength, $"El número de contacto debe tener entre {phoneMinLength} y {phoneMaxLength} caracteres.", row.NumeroContacto));
+                warningRows++;
+            }
+            else if (!PortalFieldRules.IsMobilePhone(row.NumeroContacto))
+            {
+                // El portal captura celulares de 10 dígitos; el Excel solo valida longitud, así que
+                // esto se reporta como observación y no bloquea la importación de la fila.
+                issues.Add(CreateIssue(batchId, ImportIssueCodes.SeverityWarning, "Actores", row.SourceRowNumber, "F" + row.SourceRowNumber, ImportIssueCodes.ActorPhoneFormat, "El número de contacto no corresponde a un celular de 10 dígitos.", row.NumeroContacto));
                 warningRows++;
             }
 
             var emailMinLength = _emailRule?.MinLength ?? 5;
-            if (!ActorContactValidation.IsEmailValid(row.CorreoElectronico, emailMinLength))
+            if (!ActorContactValidation.IsEmailValid(row.CorreoElectronico, emailMinLength) || !PortalFieldRules.IsEmail(row.CorreoElectronico))
             {
                 rowHasError = true;
-                issues.Add(CreateIssue(batchId, "Error", "Actores", row.SourceRowNumber, "G" + row.SourceRowNumber, "ACTOR_EMAIL_INVALID", $"Correo electrónico no cumple el formato validado por Excel (debe contener @ y . y al menos {emailMinLength} caracteres).", row.CorreoElectronico));
+                issues.Add(CreateIssue(batchId, ImportIssueCodes.SeverityError, "Actores", row.SourceRowNumber, "G" + row.SourceRowNumber, ImportIssueCodes.ActorEmailInvalid, "El correo electrónico no tiene un formato válido.", row.CorreoElectronico));
             }
 
             AccumulateRowResult(rowHasError, ref validRows, ref invalidRows);
@@ -1162,7 +1338,16 @@ public sealed class WorkbookImportService(
             : rawValue.Split(MultiSelectionSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     }
 
-    private static ImportValidationIssue CreateIssue(Guid batchId, string severity, string sheetName, int? rowNumber, string? cellReference, string errorCode, string message, string? rawValue)
+    private static ImportValidationIssue CreateIssue(
+        Guid batchId,
+        string severity,
+        string sheetName,
+        int? rowNumber,
+        string? cellReference,
+        string errorCode,
+        string message,
+        string? rawValue,
+        ImportIssueContext? context = null)
     {
         return new ImportValidationIssue
         {
@@ -1173,13 +1358,14 @@ public sealed class WorkbookImportService(
             CellReference = cellReference,
             ErrorCode = errorCode,
             Message = message,
-            RawValue = rawValue
+            RawValue = rawValue,
+            ContextJson = context?.ToJson()
         };
     }
 
-    private static ImportValidationIssueDto MapIssue(ImportValidationIssue issue)
+    private ImportValidationIssueDto MapIssue(ImportValidationIssue issue)
     {
-        return new ImportValidationIssueDto(
+        return issueNarrator.Narrate(new ImportIssueSource(
             issue.Id,
             issue.Severity,
             issue.SheetName,
@@ -1187,7 +1373,16 @@ public sealed class WorkbookImportService(
             issue.CellReference,
             issue.ErrorCode,
             issue.Message,
-            issue.RawValue);
+            issue.RawValue,
+            issue.ContextJson));
+    }
+
+    /// <summary>Descripción técnica de una excepción para el contexto de soporte.</summary>
+    private static string Describe(Exception exception)
+    {
+        return exception.InnerException is not null
+            ? $"{exception.GetType().Name}: {exception.Message} → {exception.InnerException.Message}"
+            : $"{exception.GetType().Name}: {exception.Message}";
     }
 
     /// <summary>
@@ -1205,11 +1400,17 @@ public sealed class WorkbookImportService(
         }
         catch (Exception ex)
         {
-            var detail = ex.InnerException is not null
-                ? $"{ex.Message} → {ex.InnerException.Message}"
-                : ex.Message;
+            issues.Add(CreateIssue(
+                batchId,
+                ImportIssueCodes.SeverityError,
+                sectionName,
+                null,
+                null,
+                ImportIssueCodes.PersistSectionError,
+                $"No fue posible guardar la información de la sección \"{sectionName}\".",
+                null,
+                new ImportIssueContext { TechnicalDetail = Describe(ex) }));
 
-            issues.Add(CreateIssue(batchId, "Error", sectionName, null, null, "PERSIST_SECTION_ERROR", $"Error al persistir la sección '{sectionName}': {detail}", null));
             return false;
         }
     }

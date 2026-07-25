@@ -9,9 +9,10 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
-import { FormArray, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { AbstractControl, FormArray, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
+import { MatDatepickerModule } from '@angular/material/datepicker';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
@@ -28,9 +29,18 @@ import { WorkflowApiService } from '../../core/services/workflow-api.service';
 import { ExportsApiService } from '../../core/services/exports-api.service';
 import { AuthTokenService } from '../../core/services/auth-token.service';
 import { AppRoles } from '../../core/constants/app-roles.constant';
-import { excelEmailValidator, textLengthRangeValidator } from './governance-validators';
 import { ConfirmDialogService } from '../../shared/services/confirm-dialog.service';
 import { extractErrorMessage } from '../../shared/utils/extract-error-message.util';
+import { formatCop, parseIsoDate, toIsoDate } from '../../shared/utils/date-format.util';
+import {
+  MOBILE_PHONE_DIGITS,
+  copAmountValidator,
+  dateRangeValidator,
+  describeFieldError,
+  emailFormatValidator,
+  mobilePhoneValidator,
+  requiredTextValidator
+} from '../../shared/validators/portal-validators';
 import {
   CatalogOption,
   DepartmentCatalogOption,
@@ -56,6 +66,7 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
     ReactiveFormsModule,
     MatButtonModule,
     MatCardModule,
+    MatDatepickerModule,
     MatDividerModule,
     MatFormFieldModule,
     MatIconModule,
@@ -223,19 +234,29 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                   <div class="form-grid form-grid--2col">
                     <mat-form-field appearance="outline">
                       <mat-label>Fecha de levantamiento</mat-label>
-                      <input matInput type="date" formControlName="fechaLevantamiento" required />
-                      <mat-hint>Fecha en que se realizó el levantamiento de información</mat-hint>
-                      @if (identificationForm.controls.fechaLevantamiento.invalid && identificationForm.controls.fechaLevantamiento.touched) {
-                        <mat-error>Requerido</mat-error>
+                      <input
+                        matInput
+                        [matDatepicker]="fechaLevantamientoPicker"
+                        [min]="minCaptureDate"
+                        [max]="maxCaptureDate"
+                        formControlName="fechaLevantamiento"
+                        placeholder="dd/mm/aaaa"
+                        required
+                      />
+                      <mat-datepicker-toggle matIconSuffix [for]="fechaLevantamientoPicker" />
+                      <mat-datepicker #fechaLevantamientoPicker />
+                      <mat-hint>Fecha en que se realizó el levantamiento (dd/mm/aaaa)</mat-hint>
+                      @if (fieldError(identificationForm.controls.fechaLevantamiento, 'La fecha de levantamiento'); as error) {
+                        <mat-error>{{ error }}</mat-error>
                       }
                     </mat-form-field>
 
                     <mat-form-field appearance="outline">
                       <mat-label>Responsable del registro (Gestor)</mat-label>
-                      <input matInput formControlName="responsableRegistro" required />
+                      <input matInput type="text" maxlength="200" formControlName="responsableRegistro" required />
                       <mat-hint>Persona que diligencia la ficha</mat-hint>
-                      @if (identificationForm.controls.responsableRegistro.invalid && identificationForm.controls.responsableRegistro.touched) {
-                        <mat-error>Requerido</mat-error>
+                      @if (fieldError(identificationForm.controls.responsableRegistro, 'El responsable del registro'); as error) {
+                        <mat-error>{{ error }}</mat-error>
                       }
                     </mat-form-field>
 
@@ -246,8 +267,8 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                           <mat-option [value]="dept.id">{{ dept.name }}</mat-option>
                         }
                       </mat-select>
-                      @if (identificationForm.controls.departmentId.invalid && identificationForm.controls.departmentId.touched) {
-                        <mat-error>Requerido</mat-error>
+                      @if (fieldError(identificationForm.controls.departmentId, 'El departamento'); as error) {
+                        <mat-error>{{ error }}</mat-error>
                       }
                     </mat-form-field>
 
@@ -389,12 +410,12 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
 
                       <mat-form-field appearance="outline">
                         <mat-label>Consejo Departamental de Música</mat-label>
-                        <textarea matInput formControlName="consejoDepartamentalMusica" rows="1"></textarea>
+                        <input matInput type="text" maxlength="200" formControlName="consejoDepartamentalMusica" />
                       </mat-form-field>
 
                       <mat-form-field appearance="outline">
                         <mat-label>Mesa sectorial o territorial identificada</mat-label>
-                        <textarea matInput formControlName="mesaSectorialTerritorial" rows="1"></textarea>
+                        <input matInput type="text" maxlength="200" formControlName="mesaSectorialTerritorial" />
                       </mat-form-field>
 
                       <mat-form-field appearance="outline" class="form-full">
@@ -552,23 +573,23 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Acción Estratégica</mat-label>
-                              <textarea matInput formControlName="accionEstrategica" rows="1"></textarea>
+                              <textarea matInput formControlName="accionEstrategica" rows="2"></textarea>
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Política priorizada</mat-label>
-                              <textarea matInput formControlName="politicaPriorizada" rows="1"></textarea>
+                              <textarea matInput formControlName="politicaPriorizada" rows="2"></textarea>
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Armonización PNC</mat-label>
-                              <textarea matInput formControlName="armonizacionPnc" rows="1"></textarea>
+                              <textarea matInput formControlName="armonizacionPnc" rows="2"></textarea>
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Armonización PND</mat-label>
-                              <textarea matInput formControlName="armonizacionPnd" rows="1"></textarea>
+                              <textarea matInput formControlName="armonizacionPnd" rows="2"></textarea>
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Armonización Internacional</mat-label>
-                              <textarea matInput formControlName="armonizacionInternacional" rows="1"></textarea>
+                              <textarea matInput formControlName="armonizacionInternacional" rows="2"></textarea>
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Nivel prioridad</mat-label>
@@ -581,15 +602,34 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Aliados / Responsables</mat-label>
-                              <textarea matInput formControlName="aliadosResponsables" rows="1"></textarea>
+                              <textarea matInput formControlName="aliadosResponsables" rows="2"></textarea>
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Fuentes de financiación</mat-label>
-                              <textarea matInput formControlName="fuentesFinanciacion" rows="1"></textarea>
+                              <textarea matInput formControlName="fuentesFinanciacion" rows="2"></textarea>
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Valor de la propuesta (COP)</mat-label>
-                              <input matInput type="number" formControlName="valorPropuestaCop" />
+                              <span matTextPrefix>$&nbsp;</span>
+                              <input
+                                matInput
+                                type="number"
+                                inputmode="numeric"
+                                min="0"
+                                step="1000"
+                                formControlName="valorPropuestaCop"
+                                placeholder="0"
+                              />
+                              <mat-hint>
+                                @if (formatCopValue(group.get('valorPropuestaCop')?.value); as formatted) {
+                                  {{ formatted }}
+                                } @else {
+                                  Valor en pesos colombianos, sin puntos ni comas
+                                }
+                              </mat-hint>
+                              @if (fieldError(group.get('valorPropuestaCop'), 'El valor de la propuesta'); as error) {
+                                <mat-error>{{ error }}</mat-error>
+                              }
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Enfoques</mat-label>
@@ -675,9 +715,9 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                           <mat-card-content class="form-grid form-grid--2col">
                             <mat-form-field appearance="outline" class="form-full">
                               <mat-label>Nombre del agente (creyente)</mat-label>
-                              <textarea matInput formControlName="nombreAgente" rows="1" required></textarea>
-                              @if (group.get('nombreAgente')?.invalid && group.get('nombreAgente')?.touched) {
-                                <mat-error>Requerido</mat-error>
+                              <input matInput type="text" maxlength="200" formControlName="nombreAgente" required />
+                              @if (fieldError(group.get('nombreAgente'), 'El nombre del agente'); as error) {
+                                <mat-error>{{ error }}</mat-error>
                               }
                             </mat-form-field>
                             <mat-form-field appearance="outline">
@@ -706,16 +746,35 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Número de contacto</mat-label>
-                              <input matInput formControlName="numeroContacto" />
-                              @if (group.get('numeroContacto')?.invalid && group.get('numeroContacto')?.touched) {
-                                <mat-error>Debe tener entre 7 y 20 caracteres</mat-error>
+                              <input
+                                matInput
+                                type="tel"
+                                inputmode="numeric"
+                                autocomplete="tel"
+                                [maxlength]="mobilePhoneDigits"
+                                formControlName="numeroContacto"
+                                placeholder="3001234567"
+                                (keypress)="allowDigitsOnly($event)"
+                              />
+                              <mat-hint>Celular de {{ mobilePhoneDigits }} dígitos, sin espacios ni guiones</mat-hint>
+                              @if (fieldError(group.get('numeroContacto'), 'El número de contacto'); as error) {
+                                <mat-error>{{ error }}</mat-error>
                               }
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Correo electrónico</mat-label>
-                              <input matInput formControlName="correoElectronico" type="email" />
-                              @if (group.get('correoElectronico')?.invalid && group.get('correoElectronico')?.touched) {
-                                <mat-error>Correo inválido (incluye @ y . y mínimo 5 caracteres)</mat-error>
+                              <input
+                                matInput
+                                type="email"
+                                inputmode="email"
+                                autocomplete="email"
+                                maxlength="200"
+                                formControlName="correoElectronico"
+                                placeholder="usuario@dominio.com"
+                              />
+                              <mat-hint>Formato usuario&#64;dominio.com</mat-hint>
+                              @if (fieldError(group.get('correoElectronico'), 'El correo electrónico'); as error) {
+                                <mat-error>{{ error }}</mat-error>
                               }
                             </mat-form-field>
                             <mat-form-field appearance="outline" class="form-full">
@@ -798,9 +857,11 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
       .history-empty { margin: 0; font-size: var(--font-size-body-sm); color: var(--color-on-surface-secondary); }
       .gov-stepper-wrapper { padding: var(--space-6) var(--space-2) 0; }
       .gov-form { display: flex; flex-direction: column; gap: var(--space-5); }
-      .form-grid { display: grid; gap: var(--space-4); }
+      /* row-gap mayor que column-gap: deja aire para el label flotante de la fila siguiente. */
+      .form-grid { display: grid; row-gap: var(--space-5); column-gap: var(--space-4); padding-top: var(--space-2); }
       .form-grid--2col { grid-template-columns: repeat(2, 1fr); }
       .form-full { grid-column: 1 / -1; }
+      .form-grid .mat-mdc-form-field { width: 100%; }
       .form-section-label { font-size: var(--font-size-label); font-weight: var(--font-weight-bold); color: var(--color-primary-700); text-transform: uppercase; letter-spacing: var(--letter-spacing-label); margin: var(--space-4) 0 var(--space-2); padding: var(--space-3) 0 var(--space-2); border-top: 2px solid var(--color-primary-100); }
       .step-actions { display: flex; align-items: center; gap: var(--space-3); padding-top: var(--space-5); margin-top: var(--space-2); border-top: 1px solid var(--color-border-light); }
       .step-actions button:last-child { margin-left: auto; }
@@ -814,8 +875,11 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
       .array-remove { color: var(--color-on-surface-variant); transition: color var(--transition-fast), background-color var(--transition-fast); }
       .array-remove:hover { color: var(--color-error); }
       ::ng-deep .mat-stepper-vertical { background: transparent; }
-      ::ng-deep .mat-vertical-content { padding: 0 0 var(--space-6) var(--space-8); }
+      /* El padding superior evita que el label flotante del primer campo quede recortado por el
+         contenedor del paso (que usa overflow:hidden para animar el colapso). */
+      ::ng-deep .mat-vertical-content { padding: var(--space-3) 0 var(--space-6) var(--space-8); }
       ::ng-deep .mat-vertical-content-container { margin-left: 0; }
+      ::ng-deep .mat-vertical-content-container.mat-vertical-content-container-active > .mat-vertical-stepper-content { overflow: visible; }
       ::ng-deep .mat-step-header { border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); min-height: 56px; }
       ::ng-deep .mat-step-header:hover { background: var(--color-hover); }
       ::ng-deep .mat-step-label { font-weight: var(--font-weight-semibold) !important; font-size: var(--font-size-body-sm) !important; }
@@ -894,11 +958,19 @@ export class GovernanceHomeComponent {
   readonly councilCultureOptions = ['Existe', 'No existe', 'Por renovar'];
   readonly ordinanceOptions = ['Existe', 'No existe', 'Por activar'];
 
+  /** Rango de captura de fechas: el mismo que valida el archivo oficial y el backend. */
+  readonly minCaptureDate = new Date(2000, 0, 1);
+  readonly maxCaptureDate = new Date(2100, 11, 31);
+  readonly mobilePhoneDigits = MOBILE_PHONE_DIGITS;
+
   readonly identificationForm = this.formBuilder.group({
-    fechaLevantamiento: ['', [Validators.required]],
+    fechaLevantamiento: [
+      null as Date | null,
+      [Validators.required, dateRangeValidator(this.minCaptureDate, this.maxCaptureDate)]
+    ],
     departmentId: [null as number | null, [Validators.required]],
     municipalityId: [null as number | null],
-    responsableRegistro: ['', [Validators.required]],
+    responsableRegistro: ['', [requiredTextValidator(), Validators.maxLength(200)]],
     regionOcadOptionId: [null as number | null],
     observaciones: [''],
     informationSourceIds: [[] as number[]]
@@ -958,7 +1030,7 @@ export class GovernanceHomeComponent {
         const enriched = { ...detail, departmentName: summary.departmentName };
         this.selectedFicha.set(enriched);
         this.identificationForm.patchValue({
-          fechaLevantamiento: detail.fechaLevantamiento,
+          fechaLevantamiento: parseIsoDate(detail.fechaLevantamiento),
           departmentId: detail.departmentId,
           municipalityId: detail.municipalityId,
           responsableRegistro: detail.responsableRegistro,
@@ -1126,7 +1198,7 @@ export class GovernanceHomeComponent {
     this.approvalHistory.set([]);
     this.historyOpen.set(false);
     this.identificationForm.reset({
-      fechaLevantamiento: new Date().toISOString().split('T')[0],
+      fechaLevantamiento: new Date(),
       departmentId: null,
       municipalityId: null,
       responsableRegistro: '',
@@ -1159,7 +1231,7 @@ export class GovernanceHomeComponent {
     const raw = this.identificationForm.getRawValue();
     this.governanceApiService
       .createFicha({
-        fechaLevantamiento: raw.fechaLevantamiento ?? '',
+        fechaLevantamiento: toIsoDate(raw.fechaLevantamiento),
         departmentId: raw.departmentId ?? 0,
         municipalityId: raw.municipalityId,
         responsableRegistro: raw.responsableRegistro ?? '',
@@ -1187,13 +1259,19 @@ error: (err: HttpErrorResponse) => {
 
   saveIdentification(): void {
     const ficha = this.selectedFicha();
-    if (!ficha || this.identificationForm.invalid) return;
+    if (!ficha) return;
+
+    if (this.identificationForm.invalid) {
+      this.identificationForm.markAllAsTouched();
+      this.snackBar.open('Revisa los campos marcados antes de guardar', 'Cerrar', { duration: 4000 });
+      return;
+    }
 
     this.saving.set(true);
     const raw = this.identificationForm.getRawValue();
     this.governanceApiService
       .updateFicha(ficha.id, {
-        fechaLevantamiento: raw.fechaLevantamiento ?? '',
+        fechaLevantamiento: toIsoDate(raw.fechaLevantamiento),
         departmentId: raw.departmentId ?? 0,
         municipalityId: raw.municipalityId,
         responsableRegistro: raw.responsableRegistro ?? '',
@@ -1294,6 +1372,12 @@ error: (err: HttpErrorResponse) => {
     const ficha = this.selectedFicha();
     if (!ficha) return;
 
+    if (this.pnmcAxesForm.invalid) {
+      this.pnmcAxesForm.markAllAsTouched();
+      this.snackBar.open('Revisa los campos marcados en los ejes PNMC', 'Cerrar', { duration: 4000 });
+      return;
+    }
+
     this.saving.set(true);
     this.governanceApiService
       .replacePnmcAxes(ficha.id, this.pnmcAxisGroups.getRawValue() as GovernancePnmcAxis[])
@@ -1332,6 +1416,12 @@ error: (err: HttpErrorResponse) => {
     const ficha = this.selectedFicha();
     if (!ficha) return;
 
+    if (this.actorsForm.invalid) {
+      this.actorsForm.markAllAsTouched();
+      this.snackBar.open('Revisa los campos marcados en los actores', 'Cerrar', { duration: 4000 });
+      return;
+    }
+
     this.saving.set(true);
     this.governanceApiService
       .replaceActors(ficha.id, this.actorGroups.getRawValue() as GovernanceActor[])
@@ -1345,6 +1435,27 @@ error: (err: HttpErrorResponse) => {
           this.snackBar.open(extractErrorMessage(err, 'Error al guardar'), 'Cerrar', { duration: 5000 });
         }
       });
+  }
+
+  /**
+   * Mensaje de error del campo, tomado del catálogo compartido de validaciones para que la misma
+   * regla se explique igual en todo el portal. Devuelve `null` cuando no hay error visible.
+   */
+  fieldError(control: AbstractControl | null, label: string): string | null {
+    return describeFieldError(control, label);
+  }
+
+  /** Valor en pesos formateado, para mostrarlo como ayuda debajo del campo. */
+  formatCopValue(value: unknown): string {
+    return formatCop(value as number | string | null);
+  }
+
+  /** Restringe la captura a dígitos (celulares y campos numéricos). */
+  allowDigitsOnly(event: KeyboardEvent): void {
+    const isControlKey = event.key.length > 1 || event.ctrlKey || event.metaKey;
+    if (!isControlKey && !/^\d$/.test(event.key)) {
+      event.preventDefault();
+    }
   }
 
   loadPnmcComponents(index: number): void {
@@ -1438,7 +1549,7 @@ error: (err: HttpErrorResponse) => {
       priorityLevelOptionId: [null as number | null],
       aliadosResponsables: [''],
       fuentesFinanciacion: [''],
-      valorPropuestaCop: [null as number | null, [Validators.min(0)]],
+      valorPropuestaCop: [null as number | null, [copAmountValidator()]],
       approachOptionIds: [[] as number[]],
       descripcion: [''],
       scheduleOptionId: [null as number | null],
@@ -1450,12 +1561,13 @@ error: (err: HttpErrorResponse) => {
   private createActorGroup() {
     return this.formBuilder.group({
       id: [null as string | null],
-      nombreAgente: ['', [Validators.required]],
+      nombreAgente: ['', [requiredTextValidator(), Validators.maxLength(200)]],
       agentTypeId: [null as number | null],
       ecosystemRoleIds: [[] as number[]],
       territorialLevelOptionIds: [[] as number[]],
-      numeroContacto: ['', [textLengthRangeValidator(7, 20)]],
-      correoElectronico: ['', [excelEmailValidator(5)]],
+      // Celular: solo dígitos y exactamente 10 (misma regla en el backend).
+      numeroContacto: ['', [mobilePhoneValidator()]],
+      correoElectronico: ['', [emailFormatValidator(), Validators.maxLength(200)]],
       observaciones: ['']
     });
   }

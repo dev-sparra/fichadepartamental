@@ -4,10 +4,12 @@ using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Application.Auth;
 using PortalNacionalGobernanzaMusical.Application.Catalogs;
 using PortalNacionalGobernanzaMusical.Application.Common;
+using PortalNacionalGobernanzaMusical.Application.Governance.Blueprint;
 using PortalNacionalGobernanzaMusical.Application.Exports;
 using PortalNacionalGobernanzaMusical.Application.Governance;
 using PortalNacionalGobernanzaMusical.Application.Imports;
 using PortalNacionalGobernanzaMusical.Application.Indicators;
+using PortalNacionalGobernanzaMusical.Application.Notifications;
 using PortalNacionalGobernanzaMusical.Application.Workflow;
 using PortalNacionalGobernanzaMusical.Infrastructure.Administration;
 using PortalNacionalGobernanzaMusical.Infrastructure.Audit;
@@ -18,6 +20,7 @@ using PortalNacionalGobernanzaMusical.Infrastructure.Exports;
 using PortalNacionalGobernanzaMusical.Infrastructure.Governance;
 using PortalNacionalGobernanzaMusical.Infrastructure.Imports;
 using PortalNacionalGobernanzaMusical.Infrastructure.Indicators;
+using PortalNacionalGobernanzaMusical.Infrastructure.Notifications;
 using PortalNacionalGobernanzaMusical.Infrastructure.Workflow;
 
 namespace PortalNacionalGobernanzaMusical.Infrastructure;
@@ -35,6 +38,7 @@ public static class DependencyInjection
         services.AddScoped<IIndicatorQueryService, IndicatorQueryService>();
         services.AddScoped<IUserAdministrationService, UserAdministrationService>();
         services.AddScoped<IWorkflowService, WorkflowService>();
+        services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IAuditService, AuditService>();
         services.AddSingleton<IFichaTemplateProvider, FichaTemplateProvider>();
         services.AddScoped<IFichaWorkbookWriter, OpenXmlFichaWriter>();
@@ -42,6 +46,12 @@ public static class DependencyInjection
         services.AddScoped<ICatalogLookupService, CatalogLookupService>();
         services.AddScoped<IWorkbookImportService, WorkbookImportService>();
         services.AddScoped<IImportTemplateService, ImportTemplateService>();
+
+        // El Blueprint es estático: el localizador de campos, el validador de estructura y el
+        // narrador de incidencias no tienen estado por petición.
+        services.AddSingleton<BlueprintFieldLocator>();
+        services.AddSingleton<WorkbookStructureValidator>();
+        services.AddSingleton<IImportIssueNarrator, ImportIssueNarrator>();
 
         return services;
     }

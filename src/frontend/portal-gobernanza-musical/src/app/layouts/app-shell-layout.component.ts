@@ -20,7 +20,8 @@ import {
   RouterOutlet
 } from '@angular/router';
 import { BreakpointObserver, Breakpoints } from '@angular/cdk/layout';
-import { filter, map } from 'rxjs';
+import { DatePipe } from '@angular/common';
+import { filter, interval, map } from 'rxjs';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatIconModule } from '@angular/material/icon';
@@ -31,7 +32,9 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 
 import { AppRoles } from '../core/constants/app-roles.constant';
 import { AuthTokenService } from '../core/services/auth-token.service';
+import { NotificationsApiService } from '../core/services/notifications-api.service';
 import { ConfirmDialogService } from '../shared/services/confirm-dialog.service';
+import { AppNotification, NotificationTone } from '../shared/models/notification.models';
 
 interface NavItem {
   path: string;
@@ -77,10 +80,14 @@ const NAV_ITEMS: NavItem[] = [
 
 const COLLAPSED_KEY = 'gobernanza_sidebar_collapsed';
 
+/** Frecuencia de consulta de la bandeja de avisos (1 minuto). */
+const NOTIFICATIONS_POLL_MS = 60_000;
+
 @Component({
   selector: 'app-app-shell-layout',
   standalone: true,
   imports: [
+    DatePipe,
     RouterOutlet,
     RouterLink,
     RouterLinkActive,
@@ -223,22 +230,64 @@ const COLLAPSED_KEY = 'gobernanza_sidebar_collapsed';
             <button
               mat-icon-button
               class="header-action notification-btn"
-              aria-label="Notificaciones"
+              [attr.aria-label]="
+                unreadCount() > 0 ? 'Notificaciones: ' + unreadCount() + ' sin leer' : 'Notificaciones'
+              "
               matTooltip="Notificaciones"
               [matMenuTriggerFor]="notificationsMenu"
+              (click)="loadNotifications()"
             >
-              <mat-icon>notifications_none</mat-icon>
+              <mat-icon>{{ unreadCount() > 0 ? 'notifications_active' : 'notifications_none' }}</mat-icon>
+              @if (unreadCount() > 0) {
+                <span class="notif-badge">{{ unreadCount() > 9 ? '9+' : unreadCount() }}</span>
+              }
             </button>
 
             <mat-menu #notificationsMenu="matMenu" class="notifications-menu-panel" xPosition="before">
               <div class="notif-menu-header">
                 <strong>Notificaciones</strong>
+                @if (unreadCount() > 0) {
+                  <button
+                    mat-button
+                    type="button"
+                    class="notif-read-all"
+                    (click)="markAllAsRead($event)"
+                  >
+                    Marcar todas como leídas
+                  </button>
+                }
               </div>
               <mat-divider />
-              <div class="notif-empty">
-                <mat-icon>notifications_none</mat-icon>
-                <p>No tienes notificaciones nuevas</p>
-              </div>
+
+              @if (notifications().length > 0) {
+                <div class="notif-list">
+                  @for (notification of notifications(); track notification.id) {
+                    <button
+                      type="button"
+                      class="notif-item"
+                      [class.notif-item--unread]="!notification.isRead"
+                      (click)="openNotification(notification)"
+                    >
+                      <mat-icon
+                        class="notif-item-icon"
+                        [style.color]="notificationColor(notification.tone)"
+                      >
+                        {{ notificationIcon(notification.tone) }}
+                      </mat-icon>
+                      <span class="notif-item-body">
+                        <strong>{{ notification.title }}</strong>
+                        <span class="notif-item-message">{{ notification.message }}</span>
+                        <span class="notif-item-date">{{ notification.createdAtUtc | date: 'medium' }}</span>
+                      </span>
+                    </button>
+                  }
+                </div>
+              } @else {
+                <div class="notif-empty">
+                  <mat-icon>notifications_none</mat-icon>
+                  <p>No tienes notificaciones nuevas</p>
+                </div>
+              }
             </mat-menu>
 
             <button
@@ -632,18 +681,94 @@ const COLLAPSED_KEY = 'gobernanza_sidebar_collapsed';
       .notification-btn {
         position: relative;
       }
+      .notif-badge {
+        position: absolute;
+        top: 4px;
+        right: 2px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 3px;
+        border-radius: var(--radius-full);
+        background: var(--color-error);
+        color: #ffffff;
+        font-size: 10px;
+        font-weight: 800;
+        line-height: 16px;
+        text-align: center;
+        box-shadow: 0 0 0 2px #ffffff;
+      }
       ::ng-deep .notifications-menu-panel.mat-mdc-menu-panel {
         background-color: #ffffff !important;
         border: 1px solid var(--color-border-light) !important;
         box-shadow: var(--shadow-lg) !important;
         border-radius: var(--radius-xl) !important;
-        min-width: 280px;
+        min-width: 340px;
+        max-width: 420px;
         overflow: hidden;
       }
       .notif-menu-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-3);
         padding: var(--space-4) var(--space-5);
         font-size: var(--font-size-body-sm);
         color: var(--color-on-surface);
+      }
+      .notif-read-all {
+        font-size: var(--font-size-caption) !important;
+        color: var(--color-primary-600) !important;
+      }
+      .notif-list {
+        display: flex;
+        flex-direction: column;
+        max-height: 380px;
+        overflow-y: auto;
+      }
+      .notif-item {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--space-3);
+        width: 100%;
+        padding: var(--space-3) var(--space-5);
+        border: none;
+        border-bottom: 1px solid var(--color-border-light);
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+        transition: background-color var(--transition-fast);
+      }
+      .notif-item:last-child {
+        border-bottom: none;
+      }
+      .notif-item:hover {
+        background: var(--color-hover);
+      }
+      .notif-item--unread {
+        background: var(--color-primary-50);
+      }
+      .notif-item-icon {
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+      .notif-item-body {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .notif-item-body strong {
+        font-size: var(--font-size-body-sm);
+        color: var(--color-on-surface);
+      }
+      .notif-item-message {
+        font-size: var(--font-size-caption);
+        color: var(--color-on-surface-secondary);
+        line-height: 1.5;
+      }
+      .notif-item-date {
+        font-size: var(--font-size-caption);
+        color: var(--color-on-surface-variant);
       }
       .notif-empty {
         display: flex;
@@ -817,6 +942,7 @@ export class AppShellLayoutComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly breakpointObserver = inject(BreakpointObserver);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly notificationsApiService = inject(NotificationsApiService);
 
   @ViewChild('searchInput') private readonly searchInputRef?: ElementRef<HTMLInputElement>;
 
@@ -837,7 +963,17 @@ export class AppShellLayoutComponent implements OnInit {
     return this.navItems().filter((item) => item.label.toLowerCase().includes(query));
   });
 
+  readonly notifications = signal<AppNotification[]>([]);
+  readonly unreadCount = signal(0);
+
   ngOnInit(): void {
+    // Avisos de cambio de estado (p. ej. cuando el líder aprueba o devuelve una ficha): se
+    // consultan al entrar y cada minuto, para que el gestor se entere sin recargar el portal.
+    this.loadNotifications();
+    interval(NOTIFICATIONS_POLL_MS)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.loadNotifications());
+
     this.breakpointObserver
       .observe([Breakpoints.XSmall, Breakpoints.Small])
       .pipe(
@@ -863,6 +999,66 @@ export class AppShellLayoutComponent implements OnInit {
       });
 
     this.buildBreadcrumbs();
+  }
+
+  /** Trae los avisos del usuario y la cantidad sin leer. */
+  loadNotifications(): void {
+    this.notificationsApiService.getFeed().subscribe({
+      next: (feed) => {
+        this.notifications.set(feed.items);
+        this.unreadCount.set(feed.unreadCount);
+      },
+      // La bandeja es informativa: si falla la consulta no se interrumpe la navegación.
+      error: () => undefined
+    });
+  }
+
+  /** Marca el aviso como leído y navega al módulo donde ocurrió el cambio de estado. */
+  openNotification(notification: AppNotification): void {
+    if (!notification.isRead) {
+      this.notificationsApiService.markAsRead(notification.id).subscribe({
+        next: () => this.loadNotifications(),
+        error: () => undefined
+      });
+    }
+
+    if (notification.actionRoute) {
+      void this.router.navigateByUrl(notification.actionRoute);
+    }
+  }
+
+  markAllAsRead(event: Event): void {
+    event.stopPropagation();
+    this.notificationsApiService.markAllAsRead().subscribe({
+      next: () => this.loadNotifications(),
+      error: () => undefined
+    });
+  }
+
+  notificationIcon(tone: NotificationTone): string {
+    switch (tone) {
+      case 'success':
+        return 'check_circle';
+      case 'warning':
+        return 'assignment_return';
+      case 'error':
+        return 'error_outline';
+      default:
+        return 'info';
+    }
+  }
+
+  notificationColor(tone: NotificationTone): string {
+    switch (tone) {
+      case 'success':
+        return 'var(--color-success)';
+      case 'warning':
+        return 'var(--color-warning)';
+      case 'error':
+        return 'var(--color-error)';
+      default:
+        return 'var(--color-info)';
+    }
   }
 
   toggleCollapse(): void {

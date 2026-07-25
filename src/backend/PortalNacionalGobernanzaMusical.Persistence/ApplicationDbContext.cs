@@ -8,6 +8,7 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
     public DbSet<UserAccount> UserAccounts => Set<UserAccount>();
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<UserRoleAssignment> UserRoleAssignments => Set<UserRoleAssignment>();
+    public DbSet<UserNotification> UserNotifications => Set<UserNotification>();
 
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<Municipality> Municipalities => Set<Municipality>();
@@ -142,6 +143,27 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             entity.HasKey(x => new { x.UserAccountId, x.RoleId });
             entity.HasOne(x => x.UserAccount).WithMany(x => x.RoleAssignments).HasForeignKey(x => x.UserAccountId);
             entity.HasOne(x => x.Role).WithMany(x => x.UserAssignments).HasForeignKey(x => x.RoleId);
+        });
+
+        modelBuilder.Entity<UserNotification>(entity =>
+        {
+            entity.ToTable("user_notifications");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.RecipientEmail).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.RecipientNormalizedEmail).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Category).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.EventCode).HasMaxLength(60).IsRequired();
+            entity.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Message).HasColumnType("longtext").IsRequired();
+            entity.Property(x => x.Tone).HasMaxLength(20).IsRequired();
+            entity.Property(x => x.ActionRoute).HasMaxLength(300);
+            entity.Property(x => x.RelatedEntityName).HasMaxLength(100);
+            entity.Property(x => x.TriggeredByEmail).HasMaxLength(200);
+            entity.Property(x => x.TriggeredByName).HasMaxLength(200);
+            entity.Property(x => x.IsRead).IsRequired().HasDefaultValue(false);
+            // La bandeja siempre se consulta por destinatario y en orden cronológico inverso.
+            entity.HasIndex(x => new { x.RecipientNormalizedEmail, x.IsRead });
+            entity.HasIndex(x => x.CreatedAtUtc);
         });
     }
 
