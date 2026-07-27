@@ -532,7 +532,12 @@ interface FormAlert {
 
                     <form [formGroup]="opportunitiesForm" (ngSubmit)="saveOpportunities()">
                       <div formArrayName="items" class="array-list">
-                        @for (group of opportunityGroups.controls; track $index) {
+                        <!-- Se sigue el grupo, no la posición: al recargar la ficha se reemplazan
+                             los FormGroup de la lista y, si se siguiera el índice, Angular
+                             reutilizaría los campos ya pintados y estos seguirían escribiendo en
+                             el grupo anterior (lo elegido se veía en pantalla pero no llegaba al
+                             formulario). -->
+                        @for (group of opportunityGroups.controls; track group) {
                           <mat-card class="array-card" [formGroupName]="$index">
                             <mat-card-header>
                               <mat-card-title>Oportunidad {{ $index + 1 }}</mat-card-title>
@@ -613,7 +618,8 @@ interface FormAlert {
 
                   <form [formGroup]="pnmcAxesForm" (ngSubmit)="savePnmcAxes()">
                     <div formArrayName="items" class="array-list">
-                      @for (group of pnmcAxisGroups.controls; track $index) {
+                      <!-- Se sigue el grupo, no la posición (ver Oportunidades de cambio). -->
+                      @for (group of pnmcAxisGroups.controls; track group) {
                         <mat-card class="array-card" [formGroupName]="$index">
                           <mat-card-header>
                             <mat-card-title>Eje PNMC {{ $index + 1 }}</mat-card-title>
@@ -789,7 +795,8 @@ interface FormAlert {
 
                   <form [formGroup]="actorsForm" (ngSubmit)="saveActors()">
                     <div formArrayName="items" class="array-list">
-                      @for (group of actorGroups.controls; track $index) {
+                      <!-- Se sigue el grupo, no la posición (ver Oportunidades de cambio). -->
+                      @for (group of actorGroups.controls; track group) {
                         <mat-card class="array-card" [formGroupName]="$index">
                           <mat-card-header>
                             <mat-card-title>Actor {{ $index + 1 }}</mat-card-title>

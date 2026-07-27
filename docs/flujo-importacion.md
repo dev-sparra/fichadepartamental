@@ -8,6 +8,12 @@ si hay errores parciales.
 > Archivo oficial: **`ficha_departamental_gobernanza.xlsm`** (misma plantilla que se descarga desde
 > el portal). Es la fuente única de verdad de hojas, columnas y listas. Lo que se valida es el
 > **formato y la estructura**, no el nombre del archivo.
+>
+> **Alcance:** se importan las cinco hojas de la ficha departamental —`Identificación`,
+> `Diagnóstico ecosistema`, `Oportunidades de cambio`, `Ejes PNMC` y `Actores`— con **todas sus
+> filas diligenciadas**. Las hojas `Indicadores` y `Detalle Indicadores` **no se importan**: el
+> archivo puede traerlas y se ignoran, porque esos avances se registran desde el módulo de
+> Indicadores.
 
 ---
 
@@ -17,10 +23,10 @@ si hay errores parciales.
 |---|-------|---------------------|--------------------|
 | 1 | **Archivo seleccionado** | El usuario elige o arrastra el archivo. El navegador valida extensión y tamaño antes de subirlo. | No se envía nada al servidor. Mensaje inmediato con la corrección. |
 | 2 | **Validación del formato** | El servidor verifica extensión `.xlsm`, tamaño (máx. 10 MB) y que el libro se pueda abrir. **El nombre del archivo es libre**: se acepta renombrado por departamento, fecha o versión. | Lote **Importación rechazada**. No se guarda ningún dato. |
-| 3 | **Validación de la estructura** | Verifica las 7 hojas del Blueprint (`Identificación`, `Diagnóstico ecosistema`, `Oportunidades de cambio`, `Ejes PNMC`, `Actores`, `Indicadores`, `Detalle Indicadores`) y que cada columna esté en su posición con el encabezado esperado. También rechaza la plantilla en blanco. | Lote **Importación rechazada**, indicando hoja y columna. |
+| 3 | **Validación de la estructura** | Verifica las cinco hojas que se importan (`Identificación`, `Diagnóstico ecosistema`, `Oportunidades de cambio`, `Ejes PNMC` y `Actores`) y que cada columna esté en su posición con el encabezado esperado. También rechaza la plantilla en blanco. | Lote **Importación rechazada**, indicando hoja y columna. |
 | 4 | **Validación de los datos** | Copia las filas a las tablas de trabajo del lote y compara cada valor contra los catálogos oficiales (departamentos, municipios por departamento, ejes y componentes PNMC, roles por tipo de agente, niveles, años, correos, celulares…). | Las filas con error quedan fuera; se reportan como incidencias. |
 | 5 | **Creación del lote** | Queda el registro de la carga con archivo, fecha, conteos y resultado, consultable en *Historial de lotes*. | — |
-| 6 | **Procesamiento** | Materializa la información válida en la ficha departamental y sus secciones, y en los registros de indicadores. Cada sección se guarda de forma aislada. | Si una sección falla, las demás se conservan y se informa qué sección revisar. |
+| 6 | **Procesamiento** | Materializa la información válida en la ficha departamental y sus secciones, tomando **todas las filas** de cada hoja. Cada sección se guarda de forma aislada. | Si una sección falla, las demás se conservan y se informa qué sección revisar. |
 | 7 | **Importación completada** | Se calcula el estado final y se informa el resultado con su siguiente paso. | — |
 | 8 | **Datos disponibles en Gobernanza** | La ficha queda visible y editable en `/governance`, lista para revisión del Líder de Gobernanza. | — |
 
@@ -50,11 +56,12 @@ etiqueta funcional con descripción y siguiente paso (`ImportStatusCatalog`).
    recibido y contexto (valor esperado, cómo corregirlo y detalle técnico de soporte).
 3. **Filas de trabajo del lote** (staging) — `import_*_staging_rows`: copia fiel de lo leído en el
    Excel, para auditoría y trazabilidad de la carga.
-4. **Datos definitivos**:
-   - `fichas_departamentales` y sus secciones (`diagnosticos_ecosistema`, `oportunidades_cambio`,
-     `ejes_pnmc`, `actores` y sus tablas de selección múltiple).
-   - `indicator_records` / `indicator_detail_records` y sus avances mensuales, desde las hojas
-     `Indicadores` y `Detalle Indicadores`.
+4. **Datos definitivos** — `fichas_departamentales` y sus secciones (`diagnosticos_ecosistema`,
+   `oportunidades_cambio`, `ejes_pnmc`, `actores` y sus tablas de selección múltiple).
+
+`Diagnóstico ecosistema` es la única hoja de la que se toma una sola fila, porque la ficha tiene un
+diagnóstico. Si trae varias, se usa la primera diligenciada y se deja la observación. De
+`Oportunidades de cambio`, `Ejes PNMC` y `Actores` se guardan **todas** las filas.
 
 ---
 
@@ -97,7 +104,8 @@ dos roles.
   que ya estaba guardado de una carga anterior en lugar de quedar vacía.
 - Las **observaciones** (severidad Warning, por ejemplo un valor de selección múltiple que no está
   en el catálogo o un celular que no tiene 10 dígitos) **no bloquean** la importación: el dato se
-  guarda y se deja la advertencia para revisión.
+  guarda y se deja la advertencia para revisión. Un valor de selección múltiple que no exista en el
+  catálogo simplemente se omite de esa celda; el resto de la fila y de la ficha sí se guarda.
 - Si una sección falla al guardarse, las secciones anteriores permanecen guardadas y se informa
   cuál revisar: la carga no se pierde por completo.
 - Las filas de trabajo del lote se conservan aunque la carga tenga errores, de modo que siempre

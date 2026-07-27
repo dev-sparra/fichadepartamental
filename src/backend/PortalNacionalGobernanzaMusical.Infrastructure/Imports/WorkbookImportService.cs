@@ -112,29 +112,24 @@ public sealed class WorkbookImportService(
         {
             var snapshot = await catalogLookupService.GetSnapshotAsync(cancellationToken);
 
+            // Solo las hojas de la ficha departamental: las de indicadores no se importan.
             var identifications = ExtractIdentificationRows(workbook, batch.Id);
             var diagnostics = ExtractDiagnosticRows(workbook, batch.Id);
             var opportunities = ExtractOpportunityRows(workbook, batch.Id);
             var pnmcAxes = ExtractPnmcAxisRows(workbook, batch.Id);
             var actors = ExtractActorRows(workbook, batch.Id);
-            var indicators = ExtractIndicatorRows(workbook, batch.Id);
-            var indicatorDetails = ExtractIndicatorDetailRows(workbook, batch.Id);
 
             dbContext.ImportIdentificationStagingRows.AddRange(identifications);
             dbContext.ImportDiagnosticStagingRows.AddRange(diagnostics);
             dbContext.ImportOpportunityStagingRows.AddRange(opportunities);
             dbContext.ImportPnmcAxisStagingRows.AddRange(pnmcAxes);
             dbContext.ImportActorStagingRows.AddRange(actors);
-            dbContext.ImportIndicatorStagingRows.AddRange(indicators);
-            dbContext.ImportIndicatorDetailStagingRows.AddRange(indicatorDetails);
 
             ValidateIdentification(identifications, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
             ValidateDiagnostic(diagnostics, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
             ValidateOpportunities(opportunities, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
             ValidatePnmcAxes(pnmcAxes, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
             ValidateActors(actors, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
-            ValidateIndicators(indicators, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
-            ValidateIndicatorDetails(indicatorDetails, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
 
             // Importación parcial: se guarda todo lo que está bien y solo quedan fuera las filas
             // con errores (antes, un único error dejaba la ficha sin crear y el usuario no veía
@@ -149,8 +144,6 @@ public sealed class WorkbookImportService(
                     opportunities,
                     pnmcAxes,
                     actors,
-                    indicators,
-                    indicatorDetails,
                     snapshot,
                     rowsInError,
                     issues,
@@ -189,9 +182,7 @@ public sealed class WorkbookImportService(
                     diagnostic = diagnostics.Count,
                     opportunities = opportunities.Count,
                     pnmcAxes = pnmcAxes.Count,
-                    actors = actors.Count,
-                    indicators = indicators.Count,
-                    indicatorDetails = indicatorDetails.Count
+                    actors = actors.Count
                 },
                 persistedRecords
             });
@@ -411,8 +402,6 @@ public sealed class WorkbookImportService(
         IReadOnlyCollection<ImportOpportunityStagingRow> opportunities,
         IReadOnlyCollection<ImportPnmcAxisStagingRow> pnmcAxes,
         IReadOnlyCollection<ImportActorStagingRow> actors,
-        IReadOnlyCollection<ImportIndicatorStagingRow> indicators,
-        IReadOnlyCollection<ImportIndicatorDetailStagingRow> indicatorDetails,
         CatalogValidationSnapshot snapshot,
         IReadOnlySet<(string Sheet, int Row)> rowsInError,
         ICollection<ImportValidationIssue> issues,
@@ -438,8 +427,6 @@ public sealed class WorkbookImportService(
         var opportunitySection = ImportRowSelection.SelectValidRows(opportunities, "Oportunidades de cambio", rowsInError, row => row.SourceRowNumber);
         var axisSection = ImportRowSelection.SelectValidRows(pnmcAxes, "Ejes PNMC", rowsInError, row => row.SourceRowNumber);
         var actorSection = ImportRowSelection.SelectValidRows(actors, "Actores", rowsInError, row => row.SourceRowNumber);
-        var indicatorSection = ImportRowSelection.SelectValidRows(indicators, "Indicadores", rowsInError, row => row.SourceRowNumber);
-        var indicatorDetailSection = ImportRowSelection.SelectValidRows(indicatorDetails, "Detalle Indicadores", rowsInError, row => row.SourceRowNumber);
 
         if (identifications.Count > 1)
         {
@@ -473,15 +460,10 @@ public sealed class WorkbookImportService(
         await dbContext.SaveChangesAsync(cancellationToken);
         persisted++;
 
-        dbContext.FichaFuentesInformacion.RemoveRange(dbContext.FichaFuentesInformacion.Where(x => x.FichaDepartamentalId == ficha.Id));
-        foreach (var sourceName in MultiValueParser.Split(identification.InformationSourcesRaw, snapshot.InformationSources))
+        var sourcesSaved = await TryPersistSectionAsync("Identificación", batchId, issues,
+            () => ReplaceInformationSourcesAsync(ficha, identification, snapshot, cancellationToken));
+        if (sourcesSaved)
         {
-            var sourceId = await ResolveRequiredLookupIdAsync(dbContext.InformationSourceOptions, sourceName, cancellationToken);
-            dbContext.FichaFuentesInformacion.Add(new FichaFuenteInformacion
-            {
-                FichaDepartamentalId = ficha.Id,
-                InformationSourceOptionId = sourceId
-            });
             persisted++;
         }
 
@@ -511,18 +493,6 @@ public sealed class WorkbookImportService(
         {
             var sectionSaved = await TryPersistSectionAsync("Actores", batchId, issues, () => ReplaceActorsAsync(ficha, actorSection.Rows, snapshot, cancellationToken));
             if (sectionSaved) persisted += actorSection.Rows.Count;
-        }
-
-        if (indicatorSection.ShouldReplace)
-        {
-            var sectionSaved = await TryPersistSectionAsync("Indicadores", batchId, issues, () => ReplaceIndicatorsAsync(indicatorSection.Rows, snapshot, issues, batchId, cancellationToken));
-            if (sectionSaved) persisted += indicatorSection.Rows.Count;
-        }
-
-        if (indicatorDetailSection.ShouldReplace)
-        {
-            var sectionSaved = await TryPersistSectionAsync("Detalle Indicadores", batchId, issues, () => ReplaceIndicatorDetailsAsync(indicatorDetailSection.Rows, snapshot, issues, batchId, cancellationToken));
-            if (sectionSaved) persisted += indicatorDetailSection.Rows.Count;
         }
 
         return persisted;
@@ -561,6 +531,37 @@ public sealed class WorkbookImportService(
             dbContext.DiagnosticosEcosistema.Add(entity);
             ficha.DiagnosticoEcosistema = entity;
         }
+    }
+
+    /// <summary>
+    /// Fuentes de información de la ficha. Las que no estén en el catálogo se omiten: ya se
+    /// reportaron como observación al validar y no deben impedir que se guarde la ficha.
+    /// </summary>
+    private async Task ReplaceInformationSourcesAsync(
+        FichaDepartamental ficha,
+        ImportIdentificationStagingRow identification,
+        CatalogValidationSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        dbContext.FichaFuentesInformacion.RemoveRange(
+            dbContext.FichaFuentesInformacion.Where(x => x.FichaDepartamentalId == ficha.Id));
+
+        foreach (var sourceName in MultiValueParser.Split(identification.InformationSourcesRaw, snapshot.InformationSources))
+        {
+            var sourceId = await ResolveOptionalLookupIdAsync(dbContext.InformationSourceOptions, sourceName, cancellationToken);
+            if (sourceId is null)
+            {
+                continue;
+            }
+
+            dbContext.FichaFuentesInformacion.Add(new FichaFuenteInformacion
+            {
+                FichaDepartamentalId = ficha.Id,
+                InformationSourceOptionId = sourceId.Value
+            });
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private async Task ReplaceOpportunitiesAsync(FichaDepartamental ficha, IReadOnlyCollection<ImportOpportunityStagingRow> opportunities, CancellationToken cancellationToken)
@@ -619,11 +620,16 @@ public sealed class WorkbookImportService(
 
             foreach (var approachName in MultiValueParser.Split(row.EnfoquesRaw, snapshot.Approaches))
             {
-                var approachId = await ResolveRequiredLookupIdAsync(dbContext.ApproachOptions, approachName, cancellationToken);
+                var approachId = await ResolveOptionalLookupIdAsync(dbContext.ApproachOptions, approachName, cancellationToken);
+                if (approachId is null)
+                {
+                    continue;
+                }
+
                 dbContext.EjesPnmcEnfoques.Add(new EjePnmcRegistroEnfoque
                 {
                     EjePnmcRegistroId = entity.Id,
-                    ApproachOptionId = approachId
+                    ApproachOptionId = approachId.Value
                 });
             }
         }
@@ -654,162 +660,32 @@ public sealed class WorkbookImportService(
 
             foreach (var roleName in MultiValueParser.Split(row.EcosystemRolesRaw, RolesFor(snapshot, row.AgentTypeName)))
             {
-                var roleId = await ResolveRequiredEcosystemRoleIdAsync(agentTypeId, roleName, cancellationToken);
+                var roleId = await ResolveOptionalEcosystemRoleIdAsync(agentTypeId, roleName, cancellationToken);
+                if (roleId is null)
+                {
+                    continue;
+                }
+
                 dbContext.ActorRolesEcosistema.Add(new ActorRolEcosistema
                 {
                     ActorId = actor.Id,
-                    EcosystemRoleId = roleId
+                    EcosystemRoleId = roleId.Value
                 });
             }
 
             foreach (var levelName in MultiValueParser.Split(row.TerritorialLevelsRaw, snapshot.TerritorialLevels))
             {
-                var levelId = await ResolveRequiredLookupIdAsync(dbContext.TerritorialLevelOptions, levelName, cancellationToken);
+                var levelId = await ResolveOptionalLookupIdAsync(dbContext.TerritorialLevelOptions, levelName, cancellationToken);
+                if (levelId is null)
+                {
+                    continue;
+                }
+
                 dbContext.ActorNivelesTerritoriales.Add(new ActorNivelTerritorial
                 {
                     ActorId = actor.Id,
-                    TerritorialLevelOptionId = levelId
+                    TerritorialLevelOptionId = levelId.Value
                 });
-            }
-        }
-    }
-
-    private async Task ReplaceIndicatorsAsync(IReadOnlyCollection<ImportIndicatorStagingRow> indicators, CatalogValidationSnapshot snapshot, ICollection<ImportValidationIssue> issues, Guid batchId, CancellationToken cancellationToken)
-    {
-        foreach (var row in indicators)
-        {
-            var departmentNames = MultiValueParser.Split(row.DepartmentsRaw, snapshot.Departments);
-
-            var indicatorDefinition = await dbContext.IndicatorDefinitions.SingleOrDefaultAsync(x => x.IndicatorName == row.IndicatorName, cancellationToken);
-            if (indicatorDefinition is null)
-            {
-                issues.Add(CreateIssue(batchId, "Error", "Indicadores", row.SourceRowNumber, "C" + row.SourceRowNumber, "INDICATOR_NOT_FOUND", "Indicador no existe en el catálogo maestro de indicadores.", row.IndicatorName));
-                continue;
-            }
-
-            var targetValue = indicatorDefinition.TargetValue;
-            var year = int.TryParse(row.YearRaw, out var parsedYear) ? parsedYear : 0;
-            var quantitativeValues = JsonSerializer.Deserialize<string[]>(row.MonthlyQuantitativeJson ?? "[]") ?? [];
-            var detailValues = JsonSerializer.Deserialize<string[]>(row.MonthlyDetailJson ?? "[]") ?? [];
-            var monthOptions = await dbContext.MonthOptions.OrderBy(x => x.DisplayOrder).ToListAsync(cancellationToken);
-
-            foreach (var departmentName in departmentNames)
-            {
-                var departmentId = await ResolveRequiredLookupIdAsync(dbContext.Departments, departmentName, cancellationToken);
-                var existing = await dbContext.IndicatorRecords.SingleOrDefaultAsync(
-                    x => x.DepartmentId == departmentId && x.IndicatorDefinitionId == indicatorDefinition.Id && x.Year == year,
-                    cancellationToken);
-
-                if (existing is not null)
-                {
-                    dbContext.IndicatorMonthlyProgresses.RemoveRange(dbContext.IndicatorMonthlyProgresses.Where(x => x.IndicatorRecordId == existing.Id));
-                    dbContext.IndicatorRecords.Remove(existing);
-                    await dbContext.SaveChangesAsync(cancellationToken);
-                }
-
-                var parsedQuantitative = quantitativeValues.Select(ParseDecimalString).ToArray();
-                var currentValue = targetValue <= 1
-                    ? parsedQuantitative.Where(x => x.HasValue).Select(x => x!.Value).DefaultIfEmpty(0m).Max()
-                    : parsedQuantitative.Where(x => x.HasValue).Select(x => x!.Value).DefaultIfEmpty(0m).Sum();
-                var compliance = targetValue == 0 ? 0 : currentValue / targetValue;
-
-                var record = new IndicatorRecord
-                {
-                    DepartmentId = departmentId,
-                    IndicatorDefinitionId = indicatorDefinition.Id,
-                    Year = year,
-                    Source = row.Fuente,
-                    GeneralObservations = row.ObservacionesGenerales,
-                    CurrentValueCalculated = currentValue,
-                    CompliancePercentageCalculated = compliance
-                };
-
-                dbContext.IndicatorRecords.Add(record);
-                await dbContext.SaveChangesAsync(cancellationToken);
-
-                for (var index = 0; index < monthOptions.Count; index++)
-                {
-                    dbContext.IndicatorMonthlyProgresses.Add(new IndicatorMonthlyProgress
-                    {
-                        IndicatorRecordId = record.Id,
-                        MonthOptionId = monthOptions[index].Id,
-                        QuantitativeAdvance = index < parsedQuantitative.Length ? parsedQuantitative[index] : null,
-                        Detail = index < detailValues.Length ? detailValues[index] : null
-                    });
-                }
-            }
-        }
-    }
-
-    private async Task ReplaceIndicatorDetailsAsync(IReadOnlyCollection<ImportIndicatorDetailStagingRow> indicatorDetails, CatalogValidationSnapshot snapshot, ICollection<ImportValidationIssue> issues, Guid batchId, CancellationToken cancellationToken)
-    {
-        foreach (var row in indicatorDetails)
-        {
-            var departmentNames = MultiValueParser.Split(row.DepartmentsRaw, snapshot.Departments);
-            var monthNames = MultiValueParser.Split(row.MonthsRaw, snapshot.Months);
-
-            // Si el indicador no existe en el catálogo, SingleAsync lanza InvalidOperationException,
-            // que se captura en el catch general del ImportAsync como IMPORT_EXCEPTION.
-            // Pero si el detalle (fórmula/descripción) no coincide con ninguna plantilla del
-            // catálogo, antes se descartaba en silencio. Ahora se reporta como error para que
-            // el usuario sepa por qué su fila no se importó.
-            var indicatorDefinition = await dbContext.IndicatorDefinitions.SingleOrDefaultAsync(x => x.IndicatorName == row.IndicatorName, cancellationToken);
-            if (indicatorDefinition is null)
-            {
-                issues.Add(CreateIssue(batchId, "Error", "Detalle Indicadores", row.SourceRowNumber, "C" + row.SourceRowNumber, "DETAIL_INDICATOR_NOT_FOUND", "Indicador no existe en el catálogo maestro de indicadores.", row.IndicatorName));
-                continue;
-            }
-
-            var detailTemplate = await dbContext.IndicatorDetailTemplates.SingleOrDefaultAsync(
-                x => x.IndicatorDefinitionId == indicatorDefinition.Id && x.FormulaLabel == row.FormulaLabel && x.DetailDescription == row.DetailDescription,
-                cancellationToken);
-
-            if (detailTemplate is null)
-            {
-                issues.Add(CreateIssue(batchId, "Error", "Detalle Indicadores", row.SourceRowNumber, "E" + row.SourceRowNumber, "DETAIL_TEMPLATE_NOT_FOUND", $"No existe plantilla de detalle con fórmula '{row.FormulaLabel}' y descripción '{row.DetailDescription}' para el indicador '{row.IndicatorName}'.", $"{row.FormulaLabel} | {row.DetailDescription}"));
-                continue;
-            }
-
-            var year = int.TryParse(row.YearRaw, out var parsedYear) ? parsedYear : 0;
-            var currentValue = ParseDecimalString(row.CurrentValueRaw);
-
-            foreach (var departmentName in departmentNames)
-            {
-                var departmentId = await ResolveRequiredLookupIdAsync(dbContext.Departments, departmentName, cancellationToken);
-                var existing = await dbContext.IndicatorDetailRecords.SingleOrDefaultAsync(
-                    x => x.DepartmentId == departmentId && x.IndicatorDefinitionId == indicatorDefinition.Id && x.IndicatorDetailTemplateId == detailTemplate.Id && x.Year == year,
-                    cancellationToken);
-
-                if (existing is not null)
-                {
-                    dbContext.IndicatorDetailRecordMonths.RemoveRange(dbContext.IndicatorDetailRecordMonths.Where(x => x.IndicatorDetailRecordId == existing.Id));
-                    dbContext.IndicatorDetailRecords.Remove(existing);
-                    await dbContext.SaveChangesAsync(cancellationToken);
-                }
-
-                var record = new IndicatorDetailRecord
-                {
-                    DepartmentId = departmentId,
-                    IndicatorDefinitionId = indicatorDefinition.Id,
-                    IndicatorDetailTemplateId = detailTemplate.Id,
-                    Year = year,
-                    Source = row.Fuente,
-                    Observations = row.Observaciones,
-                    CurrentValueCalculated = currentValue
-                };
-
-                dbContext.IndicatorDetailRecords.Add(record);
-                await dbContext.SaveChangesAsync(cancellationToken);
-
-                foreach (var monthName in monthNames)
-                {
-                    var monthId = await ResolveRequiredLookupIdAsync(dbContext.MonthOptions, monthName, cancellationToken);
-                    dbContext.IndicatorDetailRecordMonths.Add(new IndicatorDetailRecordMonth
-                    {
-                        IndicatorDetailRecordId = record.Id,
-                        MonthOptionId = monthId
-                    });
-                }
             }
         }
     }
@@ -974,70 +850,6 @@ public sealed class WorkbookImportService(
         return rows;
     }
 
-    private static List<ImportIndicatorStagingRow> ExtractIndicatorRows(XLWorkbook workbook, Guid batchId)
-    {
-        var rows = new List<ImportIndicatorStagingRow>();
-        var ws = workbook.Worksheet("Indicadores");
-
-        for (var row = 3; row <= 9; row++)
-        {
-            if (!HasAnyValue(ws, row, 1, 33))
-            {
-                continue;
-            }
-
-            rows.Add(new ImportIndicatorStagingRow
-            {
-                ImportBatchId = batchId,
-                SourceRowNumber = row,
-                DepartmentsRaw = GetString(ws, row, 1),
-                ActionName = GetString(ws, row, 2),
-                IndicatorName = GetString(ws, row, 3),
-                TargetRaw = GetString(ws, row, 4),
-                MonthlyQuantitativeJson = JsonSerializer.Serialize(Enumerable.Range(0, 12).Select(index => GetString(ws, row, 5 + (index * 2))).ToArray()),
-                MonthlyDetailJson = JsonSerializer.Serialize(Enumerable.Range(0, 12).Select(index => GetString(ws, row, 6 + (index * 2))).ToArray()),
-                Fuente = GetString(ws, row, 31),
-                YearRaw = GetString(ws, row, 32),
-                ObservacionesGenerales = GetString(ws, row, 33)
-            });
-        }
-
-        return rows;
-    }
-
-    private static List<ImportIndicatorDetailStagingRow> ExtractIndicatorDetailRows(XLWorkbook workbook, Guid batchId)
-    {
-        var rows = new List<ImportIndicatorDetailStagingRow>();
-        var ws = workbook.Worksheet("Detalle Indicadores");
-
-        for (var row = 2; row <= 14; row++)
-        {
-            if (!HasAnyValue(ws, row, 1, 11))
-            {
-                continue;
-            }
-
-            rows.Add(new ImportIndicatorDetailStagingRow
-            {
-                ImportBatchId = batchId,
-                SourceRowNumber = row,
-                DepartmentsRaw = GetString(ws, row, 1),
-                ActionName = GetString(ws, row, 2),
-                IndicatorName = GetString(ws, row, 3),
-                TargetRaw = GetString(ws, row, 4),
-                FormulaLabel = GetString(ws, row, 5),
-                DetailDescription = GetString(ws, row, 6),
-                MonthsRaw = GetString(ws, row, 7),
-                CurrentValueRaw = GetString(ws, row, 8),
-                Fuente = GetString(ws, row, 9),
-                YearRaw = GetString(ws, row, 10),
-                Observaciones = GetString(ws, row, 11)
-            });
-        }
-
-        return rows;
-    }
-
     private static void ValidateIdentification(IReadOnlyCollection<ImportIdentificationStagingRow> rows, CatalogValidationSnapshot snapshot, ICollection<ImportValidationIssue> issues, ref int validRows, ref int invalidRows, ref int warningRows, Guid batchId)
     {
         foreach (var row in rows)
@@ -1179,63 +991,6 @@ public sealed class WorkbookImportService(
         }
     }
 
-    private static void ValidateIndicators(IReadOnlyCollection<ImportIndicatorStagingRow> rows, CatalogValidationSnapshot snapshot, ICollection<ImportValidationIssue> issues, ref int validRows, ref int invalidRows, ref int warningRows, Guid batchId)
-    {
-        foreach (var row in rows)
-        {
-            var rowHasError = false;
-            warningRows += ValidateMultiSelection(batchId, "Indicadores", row.SourceRowNumber, "A", row.DepartmentsRaw, snapshot.Departments, issues, "INDICATORS_DEPARTMENT_INVALID");
-
-            if (!string.IsNullOrWhiteSpace(row.IndicatorName) && !snapshot.IndicatorNames.Contains(row.IndicatorName))
-            {
-                rowHasError = true;
-                issues.Add(CreateIssue(batchId, "Error", "Indicadores", row.SourceRowNumber, "C" + row.SourceRowNumber, "INDICATOR_NAME_INVALID", "Indicador no existe en el catálogo maestro de indicadores.", row.IndicatorName));
-            }
-
-            if (int.TryParse(row.YearRaw, out var yearValue))
-            {
-                if (!snapshot.Years.Contains(yearValue))
-                {
-                    rowHasError = true;
-                    issues.Add(CreateIssue(batchId, "Error", "Indicadores", row.SourceRowNumber, "AF" + row.SourceRowNumber, "INDICATOR_YEAR_INVALID", "Año no existe en catálogo maestro.", row.YearRaw));
-                }
-            }
-            else if (!string.IsNullOrWhiteSpace(row.YearRaw))
-            {
-                rowHasError = true;
-                issues.Add(CreateIssue(batchId, "Error", "Indicadores", row.SourceRowNumber, "AF" + row.SourceRowNumber, "INDICATOR_YEAR_FORMAT", "Año debe ser numérico entero.", row.YearRaw));
-            }
-
-            AccumulateRowResult(rowHasError, ref validRows, ref invalidRows);
-        }
-    }
-
-    private static void ValidateIndicatorDetails(IReadOnlyCollection<ImportIndicatorDetailStagingRow> rows, CatalogValidationSnapshot snapshot, ICollection<ImportValidationIssue> issues, ref int validRows, ref int invalidRows, ref int warningRows, Guid batchId)
-    {
-        foreach (var row in rows)
-        {
-            var rowHasError = false;
-            warningRows += ValidateMultiSelection(batchId, "Detalle Indicadores", row.SourceRowNumber, "A", row.DepartmentsRaw, snapshot.Departments, issues, "DETAIL_DEPARTMENT_INVALID");
-            warningRows += ValidateMultiSelection(batchId, "Detalle Indicadores", row.SourceRowNumber, "G", row.MonthsRaw, snapshot.Months, issues, "DETAIL_MONTH_INVALID");
-
-            if (int.TryParse(row.YearRaw, out var yearValue))
-            {
-                if (!snapshot.Years.Contains(yearValue))
-                {
-                    rowHasError = true;
-                    issues.Add(CreateIssue(batchId, "Error", "Detalle Indicadores", row.SourceRowNumber, "J" + row.SourceRowNumber, "DETAIL_YEAR_INVALID", "Año no existe en catálogo maestro.", row.YearRaw));
-                }
-            }
-            else if (!string.IsNullOrWhiteSpace(row.YearRaw))
-            {
-                rowHasError = true;
-                issues.Add(CreateIssue(batchId, "Error", "Detalle Indicadores", row.SourceRowNumber, "J" + row.SourceRowNumber, "DETAIL_YEAR_FORMAT", "Año debe existir en la lista de valores permitidos.", row.YearRaw));
-            }
-
-            AccumulateRowResult(rowHasError, ref validRows, ref invalidRows);
-        }
-    }
-
     private static bool ValidateSingleLookup(Guid batchId, string sheetName, int row, string column, string? value, HashSet<string> validValues, ICollection<ImportValidationIssue> issues, string errorCode)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1342,6 +1097,11 @@ public sealed class WorkbookImportService(
         return decimal.TryParse(cell.GetFormattedString().Replace("%", string.Empty).Trim(), out var parsed) ? parsed : null;
     }
 
+    /// <summary>
+    /// Busca el identificador de un valor de catálogo por su nombre. Devuelve <c>null</c> cuando el
+    /// valor no está en el catálogo, en lugar de lanzar: un dato fuera de lista ya se reportó como
+    /// incidencia y no debe tumbar el guardado del resto de la ficha.
+    /// </summary>
     private async Task<int?> ResolveOptionalLookupIdAsync<TEntity>(IQueryable<TEntity> queryable, string? name, CancellationToken cancellationToken)
         where TEntity : class
     {
@@ -1350,19 +1110,16 @@ public sealed class WorkbookImportService(
             return null;
         }
 
-        return await queryable.Where(x => EF.Property<string>(x, "Name") == name).Select(x => (int?)EF.Property<int>(x, "Id")).SingleAsync(cancellationToken);
+        return await queryable
+            .Where(x => EF.Property<string>(x, "Name") == name)
+            .Select(x => (int?)EF.Property<int>(x, "Id"))
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private async Task<int?> ResolveOptionalLookupIdAsync<TEntity>(DbSet<TEntity> set, string? name, CancellationToken cancellationToken)
         where TEntity : class
     {
         return await ResolveOptionalLookupIdAsync(set.AsQueryable(), name, cancellationToken);
-    }
-
-    private async Task<int> ResolveRequiredLookupIdAsync<TEntity>(DbSet<TEntity> set, string name, CancellationToken cancellationToken)
-        where TEntity : class
-    {
-        return await set.Where(x => EF.Property<string>(x, "Name") == name).Select(x => EF.Property<int>(x, "Id")).SingleAsync(cancellationToken);
     }
 
     private async Task<int?> ResolveOptionalPnmcComponentIdAsync(int? axisId, string? componentName, CancellationToken cancellationToken)
@@ -1372,12 +1129,18 @@ public sealed class WorkbookImportService(
             return null;
         }
 
-        return await dbContext.PnmcComponents.Where(x => x.PnmcAxisId == axisId && x.Name == componentName).Select(x => (int?)x.Id).SingleAsync(cancellationToken);
+        return await dbContext.PnmcComponents
+            .Where(x => x.PnmcAxisId == axisId && x.Name == componentName)
+            .Select(x => (int?)x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private async Task<int> ResolveRequiredEcosystemRoleIdAsync(int? agentTypeId, string roleName, CancellationToken cancellationToken)
+    private async Task<int?> ResolveOptionalEcosystemRoleIdAsync(int? agentTypeId, string roleName, CancellationToken cancellationToken)
     {
-        return await dbContext.EcosystemRoles.Where(x => x.AgentTypeId == agentTypeId && x.Name == roleName).Select(x => x.Id).SingleAsync(cancellationToken);
+        return await dbContext.EcosystemRoles
+            .Where(x => x.AgentTypeId == agentTypeId && x.Name == roleName)
+            .Select(x => (int?)x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private static decimal? ParseDecimalString(string? raw)

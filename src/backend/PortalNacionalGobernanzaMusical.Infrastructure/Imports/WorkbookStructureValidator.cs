@@ -5,9 +5,11 @@ using PortalNacionalGobernanzaMusical.Application.Imports;
 namespace PortalNacionalGobernanzaMusical.Infrastructure.Imports;
 
 /// <summary>
-/// Verifica que el libro cargado sea realmente la Ficha Departamental de Gobernanza oficial:
-/// que existan las 7 hojas del Blueprint, que cada columna esté en su posición con el encabezado
-/// esperado y que el archivo traiga información diligenciada.
+/// Verifica que el libro cargado sea realmente la Ficha Departamental de Gobernanza oficial: que
+/// existan las hojas que se importan (de <c>Identificación</c> a <c>Actores</c>), que cada columna
+/// esté en su posición con el encabezado esperado y que el archivo traiga información diligenciada.
+/// <para>Las hojas de indicadores no se revisan porque tampoco se importan: el archivo puede
+/// traerlas o no, y en ambos casos se ignoran (<see cref="ImportedSheetScope"/>).</para>
 /// <para>Si algo no coincide, la importación se rechaza sin escribir datos y se devuelven
 /// incidencias redactadas para el usuario (nunca errores técnicos).</para>
 /// </summary>
@@ -26,7 +28,7 @@ public sealed class WorkbookStructureValidator(IFichaBlueprintProvider blueprint
         var sheetsWithData = 0;
         var missingSheets = 0;
 
-        foreach (var sheet in _blueprint.Sheets)
+        foreach (var sheet in ImportedSheetScope.ImportedSheets(_blueprint))
         {
             if (!workbook.Worksheets.TryGetWorksheet(sheet.Name, out var worksheet))
             {

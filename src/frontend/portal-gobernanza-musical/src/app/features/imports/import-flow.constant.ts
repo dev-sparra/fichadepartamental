@@ -38,7 +38,8 @@ export const IMPORT_FLOW_STAGES: ImportStage[] = [
   {
     key: 'structure',
     label: 'Validación de la estructura',
-    detail: 'Se comprueba que estén las 7 hojas de la ficha y todas sus columnas en la posición correcta.',
+    detail:
+      'Se comprueba que estén las cinco hojas que se importan, de Identificación a Actores, con todas sus columnas en la posición correcta.',
     icon: 'table_view'
   },
   {

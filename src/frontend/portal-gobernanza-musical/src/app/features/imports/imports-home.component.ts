@@ -473,8 +473,13 @@ function toneColor(tone: ImportTone | string): string {
               <p>
                 Cada carga guarda primero una copia fiel del archivo (filas de trabajo del lote) y
                 luego materializa la información en la ficha departamental: identificación,
-                diagnóstico del ecosistema, oportunidades de cambio, ejes PNMC y actores. Las hojas
-                de Indicadores y Detalle Indicadores alimentan el módulo de Indicadores.
+                diagnóstico del ecosistema, oportunidades de cambio, ejes PNMC y actores, con
+                <strong>todas las filas diligenciadas</strong> de cada hoja.
+              </p>
+              <p>
+                Las hojas de <strong>Indicadores</strong> y <strong>Detalle Indicadores</strong> no
+                se importan: el archivo puede traerlas, pero se ignoran. Esos avances se registran
+                desde el módulo de Indicadores.
               </p>
             </mat-expansion-panel>
 
