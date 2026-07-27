@@ -8,6 +8,8 @@ export interface GovernanceFichaSummary {
   opportunitiesCount: number;
   axesCount: number;
   actorsCount: number;
+  /** Estado de revisión que envía el backend: Borrador, Aprobado o Devuelto. */
+  approvalStatus: string;
 }
 
 export interface GovernanceFichaDetail {

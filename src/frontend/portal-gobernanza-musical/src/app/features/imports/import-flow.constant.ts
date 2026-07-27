@@ -26,13 +26,13 @@ export const IMPORT_FLOW_STAGES: ImportStage[] = [
   {
     key: 'selected',
     label: 'Archivo seleccionado',
-    detail: 'Eliges desde tu equipo el archivo oficial ficha_departamental_gobernanza.xlsm diligenciado.',
+    detail: 'Eliges desde tu equipo la ficha diligenciada. El nombre del archivo puede ser cualquiera.',
     icon: 'attach_file'
   },
   {
     key: 'format',
     label: 'Validación del formato',
-    detail: 'Se verifica que sea el archivo oficial (.xlsm), con el nombre esperado y un tamaño válido.',
+    detail: 'Se verifica que sea un libro de Excel .xlsm legible y con un tamaño válido.',
     icon: 'fact_check'
   },
   {

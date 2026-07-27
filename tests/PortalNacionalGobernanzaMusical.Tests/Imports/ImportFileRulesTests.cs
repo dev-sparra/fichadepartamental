@@ -3,8 +3,9 @@ using PortalNacionalGobernanzaMusical.Application.Imports;
 namespace PortalNacionalGobernanzaMusical.Tests.Imports;
 
 /// <summary>
-/// Solo debe admitirse el archivo oficial <c>ficha_departamental_gobernanza.xlsm</c>: cualquier
-/// otra extensión o nombre se rechaza antes de leer el contenido, con un mensaje funcional.
+/// Se admite cualquier archivo <c>.xlsm</c>: lo que importa es el formato y la estructura, no el
+/// nombre (en territorio es común renombrar el archivo sin cambiar su contenido). Otras
+/// extensiones se rechazan antes de leer el contenido, con un mensaje funcional.
 /// </summary>
 public sealed class ImportFileRulesTests
 {
@@ -12,24 +13,24 @@ public sealed class ImportFileRulesTests
     [InlineData("ficha_departamental_gobernanza.xlsm")]
     [InlineData("Ficha_Departamental_Gobernanza.XLSM")]
     [InlineData("ficha_departamental_gobernanza (1).xlsm")]
-    [InlineData("ficha_departamental_gobernanza_antioquia.xlsm")]
-    [InlineData("ficha-departamental-gobernanza.xlsm")]
-    public void Validate_ShouldAcceptOfficialWorkbookNames(string fileName)
+    [InlineData("ficha antioquia marzo 2026.xlsm")]
+    [InlineData("FICHA GOBERNANZA VF final.xlsm")]
+    [InlineData("copia de trabajo.xlsm")]
+    public void Validate_ShouldAcceptAnyFileNameWithTheOfficialFormat(string fileName)
     {
         Assert.Empty(ImportFileRules.Validate(fileName, 512_000));
     }
 
     [Theory]
-    [InlineData("ficha_departamental_gobernanza.xlsx", ImportIssueCodes.FileExtensionInvalid)]
-    [InlineData("ficha_departamental_gobernanza.csv", ImportIssueCodes.FileExtensionInvalid)]
-    [InlineData("datos.pdf", ImportIssueCodes.FileExtensionInvalid)]
-    [InlineData("consolidado_indicadores.xlsm", ImportIssueCodes.FileNameInvalid)]
-    [InlineData("ficha.xlsm", ImportIssueCodes.FileNameInvalid)]
-    public void Validate_ShouldRejectFilesThatAreNotTheOfficialWorkbook(string fileName, string expectedCode)
+    [InlineData("ficha_departamental_gobernanza.xlsx")]
+    [InlineData("ficha_departamental_gobernanza.csv")]
+    [InlineData("datos.pdf")]
+    [InlineData("ficha_sin_extension")]
+    public void Validate_ShouldRejectFilesThatAreNotXlsm(string fileName)
     {
         var rejections = ImportFileRules.Validate(fileName, 512_000);
 
-        Assert.Contains(rejections, rejection => rejection.Code == expectedCode);
+        Assert.Contains(rejections, rejection => rejection.Code == ImportIssueCodes.FileExtensionInvalid);
         Assert.All(rejections, rejection =>
         {
             Assert.False(string.IsNullOrWhiteSpace(rejection.Message));

@@ -3,13 +3,21 @@ import {
   Component,
   computed,
   DestroyRef,
+  ElementRef,
   inject,
   signal
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { HttpErrorResponse } from '@angular/common/http';
 import { DatePipe } from '@angular/common';
-import { AbstractControl, FormArray, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import {
+  AbstractControl,
+  FormArray,
+  FormBuilder,
+  FormGroup,
+  ReactiveFormsModule,
+  Validators
+} from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatDatepickerModule } from '@angular/material/datepicker';
@@ -57,6 +65,34 @@ import {
   GovernancePnmcAxis
 } from '../../shared/models/governance.models';
 import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflow.models';
+
+/** Etiqueta de cada campo, igual a la de la Ficha Departamental, para nombrarlo en los errores. */
+const FIELD_LABELS: Record<string, string> = {
+  fechaLevantamiento: 'Fecha de levantamiento',
+  departmentId: 'Departamento',
+  municipalityId: 'Ciudad',
+  responsableRegistro: 'Responsable del registro (Gestor)',
+  regionOcadOptionId: 'Región OCAD',
+  informationSourceIds: 'Fuente de información',
+  observaciones: 'Observaciones',
+  nombreAgente: 'Nombre del agente (creyente)',
+  agentTypeId: 'Tipo de agente (categoría)',
+  ecosystemRoleIds: 'Rol en el ecosistema',
+  territorialLevelOptionIds: 'Nivel territorial',
+  numeroContacto: 'Número de contacto',
+  correoElectronico: 'Correo electrónico',
+  descripcionHallazgo: 'Descripción hallazgo',
+  pnmcAxisId: 'Eje PNMC',
+  pnmcComponentId: 'Componente PNMC',
+  valorPropuestaCop: 'Valor de la propuesta (COP)',
+  situacionIdentificada: 'Situación identificada',
+  priorityLevelOptionId: 'Nivel de impacto'
+};
+
+interface FormAlert {
+  title: string;
+  items: { label: string; message: string }[];
+}
 
 @Component({
   selector: 'app-governance-home',
@@ -115,6 +151,17 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                       <span class="ficha-date">{{ ficha.fechaLevantamiento | date: 'mediumDate' }}</span>
                       <span class="ficha-resp">{{ ficha.responsableRegistro }}</span>
                     </div>
+                    <span
+                      class="ficha-status"
+                      [style.--status-color]="statusColor(ficha.approvalStatus)"
+                      [matTooltip]="
+                        ficha.approvalStatus === 'Borrador'
+                          ? 'Ficha en borrador: aún no la ha revisado el Líder de Gobernanza'
+                          : 'Estado de revisión de la ficha'
+                      "
+                    >
+                      {{ statusLabel(ficha.approvalStatus) }}
+                    </span>
                   </div>
                   <div class="ficha-stats">
                     <span class="ficha-stat">
@@ -227,6 +274,31 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                 <p>Modo solo lectura: tu rol permite revisar y aprobar, pero no editar el diligenciamiento de la ficha.</p>
               </div>
             }
+
+            @if (formAlert(); as alert) {
+              <div class="gov-form-alert" role="alert">
+                <mat-icon class="gov-form-alert-icon">error_outline</mat-icon>
+                <div class="gov-form-alert-body">
+                  <strong>{{ alert.title }}</strong>
+                  @if (alert.items.length > 0) {
+                    <ul>
+                      @for (item of alert.items; track item.label) {
+                        <li><strong>{{ item.label }}:</strong> {{ item.message }}</li>
+                      }
+                    </ul>
+                  }
+                </div>
+                <button
+                  mat-icon-button
+                  type="button"
+                  class="gov-form-alert-close"
+                  aria-label="Cerrar el aviso"
+                  (click)="formAlert.set(null)"
+                >
+                  <mat-icon>close</mat-icon>
+                </button>
+              </div>
+            }
             <mat-stepper orientation="vertical" [linear]="false">
               <!-- Step 1: Identification -->
               <mat-step [stepControl]="identificationForm" label="Identificación">
@@ -311,7 +383,9 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
                     @if (isDraft()) {
                       <button mat-button type="button" (click)="cancelDraft()">Cancelar</button>
                     }
-                    <button mat-flat-button color="primary" type="submit" [disabled]="identificationForm.invalid || saving() || !canEdit()">
+                    <!-- El botón permanece habilitado: al pulsarlo se indica exactamente qué campo
+                         falta, en lugar de dejar al usuario sin saber por qué no puede continuar. -->
+                    <button mat-flat-button color="primary" type="submit" [disabled]="saving() || !canEdit()">
                       <mat-icon>save</mat-icon>
                       {{ isDraft() ? 'Crear ficha' : 'Guardar identificación' }}
                     </button>
@@ -819,6 +893,7 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
       .ficha-card:hover { border-color: var(--color-primary-300); box-shadow: var(--shadow-md); transform: translateY(-2px); }
       .ficha-card--active { border-color: var(--color-primary-500); background: var(--color-primary-50); box-shadow: var(--shadow-lg); }
       .ficha-card-main { display: flex; align-items: flex-start; gap: var(--space-4); }
+      .ficha-status { margin-left: auto; padding: 2px var(--space-3); border-radius: var(--radius-full); font-size: var(--font-size-label); font-weight: var(--font-weight-bold); white-space: nowrap; color: var(--status-color); background: color-mix(in srgb, var(--status-color) 12%, transparent); border: 1px solid color-mix(in srgb, var(--status-color) 28%, transparent); }
       .ficha-icon { color: var(--color-primary-700); flex-shrink: 0; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: var(--color-primary-50); border-radius: var(--radius-lg); font-size: 20px; }
       .ficha-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
       .ficha-dept { font-size: var(--font-size-body); font-weight: var(--font-weight-bold); color: var(--color-on-surface); }
@@ -837,6 +912,15 @@ import { ApprovalRecord, FichaApprovalStatus } from '../../shared/models/workflo
       .gov-readonly-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-4); background: var(--color-surface-container-low); border: 1px solid var(--color-border-light); border-radius: var(--radius-lg); }
       .gov-readonly-banner mat-icon { color: var(--color-on-surface-secondary); flex-shrink: 0; }
       .gov-readonly-banner p { margin: 0; font-size: var(--font-size-body-sm); color: var(--color-on-surface-secondary); }
+      .gov-form-alert { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-5); background: var(--color-error-bg); border: 1px solid var(--color-error-border); border-left: 4px solid var(--color-error); border-radius: var(--radius-lg); color: var(--color-error-text); }
+      .gov-form-alert-icon { flex-shrink: 0; color: var(--color-error); }
+      .gov-form-alert-body { flex: 1; font-size: var(--font-size-body-sm); line-height: 1.6; }
+      .gov-form-alert-body ul { margin: var(--space-2) 0 0; padding-left: var(--space-5); display: flex; flex-direction: column; gap: 2px; }
+      .gov-form-alert-close { flex-shrink: 0; color: var(--color-error-text); }
+      /* Campo con error: además del borde rojo de Material, un fondo suave para ubicarlo rápido
+         (mat-form-field-invalid la aplica Material cuando el control es inválido y fue tocado). */
+      .gov-form .mat-mdc-form-field.mat-form-field-invalid .mat-mdc-text-field-wrapper { background: color-mix(in srgb, var(--color-error) 6%, transparent); }
+      .gov-form .mat-mdc-form-field.mat-form-field-invalid .mat-mdc-form-field-error { font-weight: var(--font-weight-semibold); }
       .step-locked { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-6) var(--space-5); background: var(--color-surface-container-low); border-radius: var(--radius-lg); }
       .step-locked mat-icon { color: var(--color-outline); flex-shrink: 0; }
       .step-locked p { margin: 0; font-size: var(--font-size-body-sm); color: var(--color-on-surface-secondary); }
@@ -908,6 +992,7 @@ export class GovernanceHomeComponent {
   private readonly workflowApiService = inject(WorkflowApiService);
   private readonly exportsApiService = inject(ExportsApiService);
   private readonly authTokenService = inject(AuthTokenService);
+  private readonly hostRef = inject<ElementRef<HTMLElement>>(ElementRef);
 
   /** RBAC: el Gestor y el Administrador diligencian las hojas de la ficha. */
   readonly canEdit = computed(() =>
@@ -924,10 +1009,15 @@ export class GovernanceHomeComponent {
     this.authTokenService.hasAnyRole([AppRoles.Administrador])
   );
 
+  /**
+   * Estados que devuelve el backend (Borrador / Aprobado / Devuelto) traducidos a la etiqueta que
+   * ve el usuario. Una ficha recién creada o recién importada está en Borrador: aún no la revisa
+   * el Líder de Gobernanza.
+   */
   private readonly workflowStatusLabels: Record<string, string> = {
-    Pending: 'Pendiente',
-    Approved: 'Aprobada',
-    Rejected: 'Rechazada'
+    Borrador: 'Borrador · sin revisar',
+    Aprobado: 'Aprobada',
+    Devuelto: 'Devuelta para ajustes'
   };
 
   readonly approvalStatus = signal<FichaApprovalStatus | null>(null);
@@ -955,6 +1045,9 @@ export class GovernanceHomeComponent {
 
   readonly saving = signal(false);
   readonly isDraft = signal(false);
+
+  /** Campos por corregir de la sección que se intentó guardar (del formulario o del backend). */
+  readonly formAlert = signal<FormAlert | null>(null);
   readonly councilCultureOptions = ['Existe', 'No existe', 'Por renovar'];
   readonly ordinanceOptions = ['Existe', 'No existe', 'Por activar'];
 
@@ -1025,6 +1118,8 @@ export class GovernanceHomeComponent {
   selectFicha(summary: GovernanceFichaSummary): void {
     this.isDraft.set(false);
     this.saving.set(true);
+    // Se limpia antes de cargar: si la ficha no tiene alguna sección, no debe quedar la anterior.
+    this.resetSectionForms();
     this.governanceApiService.getFicha(summary.id).subscribe({
       next: (detail) => {
         const enriched = { ...detail, departmentName: summary.departmentName };
@@ -1046,8 +1141,7 @@ export class GovernanceHomeComponent {
         this.saving.set(false);
       },
       error: (err: HttpErrorResponse) => {
-        this.saving.set(false);
-        this.snackBar.open(extractErrorMessage(err, 'Error al cargar la ficha'), 'Cerrar', { duration: 5000 });
+        this.handleSaveError(err, 'Error al cargar la ficha');
       }
     });
   }
@@ -1064,15 +1158,22 @@ export class GovernanceHomeComponent {
   }
 
   workflowStatusLabel(): string {
-    const status = this.approvalStatus()?.status;
-    if (!status) return 'Pendiente';
-    return this.workflowStatusLabels[status] ?? status;
+    return this.statusLabel(this.approvalStatus()?.status);
   }
 
   workflowStatusColor(): string {
-    const status = this.approvalStatus()?.status;
-    if (status === 'Approved') return 'var(--color-success)';
-    if (status === 'Rejected') return 'var(--color-error)';
+    return this.statusColor(this.approvalStatus()?.status);
+  }
+
+  /** Etiqueta de estado de una ficha del listado (incluidas las que llegan por importación). */
+  statusLabel(status: string | null | undefined): string {
+    if (!status) return this.workflowStatusLabels['Borrador'];
+    return this.workflowStatusLabels[status] ?? status;
+  }
+
+  statusColor(status: string | null | undefined): string {
+    if (status === 'Aprobado') return 'var(--color-success)';
+    if (status === 'Devuelto') return 'var(--color-error)';
     return 'var(--color-warning)';
   }
 
@@ -1206,11 +1307,39 @@ export class GovernanceHomeComponent {
       observaciones: '',
       informationSourceIds: []
     });
+
+    // Sin esto, los pasos 2 a 5 seguirían mostrando lo diligenciado en la ficha anterior.
+    this.resetSectionForms();
   }
 
   cancelDraft(): void {
     this.isDraft.set(false);
     this.identificationForm.reset();
+    this.resetSectionForms();
+  }
+
+  /**
+   * Deja el diagnóstico y las secciones de colección en blanco. Se llama al empezar una ficha
+   * nueva y antes de cargar otra, porque el API no devuelve secciones vacías (no hay nada que
+   * traer) y los formularios conservarían los datos de la ficha anterior.
+   */
+  private resetSectionForms(): void {
+    this.diagnosticForm.reset();
+
+    for (const array of [this.opportunityGroups, this.pnmcAxisGroups, this.actorGroups]) {
+      while (array.length) {
+        array.removeAt(0);
+      }
+    }
+
+    this.opportunityGroups.push(this.createOpportunityGroup());
+    this.pnmcAxisGroups.push(this.createPnmcAxisGroup());
+    this.actorGroups.push(this.createActorGroup());
+
+    // Las listas dependientes están cacheadas por índice de fila: también deben limpiarse.
+    this.pnmcComponentOptions.set({});
+    this.ecosystemRoleOptions.set({});
+    this.formAlert.set(null);
   }
 
   onIdentificationSubmit(): void {
@@ -1222,8 +1351,7 @@ export class GovernanceHomeComponent {
   }
 
   createFromIdentification(): void {
-    if (this.identificationForm.invalid) {
-      this.identificationForm.markAllAsTouched();
+    if (!this.canSave(this.identificationForm, 'Para crear la ficha faltan datos por diligenciar:')) {
       return;
     }
 
@@ -1251,8 +1379,7 @@ export class GovernanceHomeComponent {
           this.loadWorkflowStatus(detail.id);
         },
 error: (err: HttpErrorResponse) => {
-          this.saving.set(false);
-          this.snackBar.open(extractErrorMessage(err, 'Error al crear la ficha'), 'Cerrar', { duration: 5000 });
+          this.handleSaveError(err, 'Error al crear la ficha');
         }
       });
   }
@@ -1261,9 +1388,7 @@ error: (err: HttpErrorResponse) => {
     const ficha = this.selectedFicha();
     if (!ficha) return;
 
-    if (this.identificationForm.invalid) {
-      this.identificationForm.markAllAsTouched();
-      this.snackBar.open('Revisa los campos marcados antes de guardar', 'Cerrar', { duration: 4000 });
+    if (!this.canSave(this.identificationForm, 'Para guardar la identificación faltan datos por diligenciar:')) {
       return;
     }
 
@@ -1287,8 +1412,7 @@ error: (err: HttpErrorResponse) => {
           this.snackBar.open('Identificación guardada', 'Cerrar', { duration: 3000 });
         },
         error: (err: HttpErrorResponse) => {
-          this.saving.set(false);
-          this.snackBar.open(extractErrorMessage(err, 'Error al guardar'), 'Cerrar', { duration: 5000 });
+          this.handleSaveError(err, 'Error al guardar');
         }
       });
   }
@@ -1305,8 +1429,7 @@ error: (err: HttpErrorResponse) => {
         this.snackBar.open('Diagnóstico guardado', 'Cerrar', { duration: 3000 });
       },
       error: (err: HttpErrorResponse) => {
-        this.saving.set(false);
-        this.snackBar.open(extractErrorMessage(err, 'Error al guardar'), 'Cerrar', { duration: 5000 });
+        this.handleSaveError(err, 'Error al guardar');
       }
     });
   }
@@ -1343,8 +1466,7 @@ error: (err: HttpErrorResponse) => {
           this.snackBar.open('Oportunidades guardadas', 'Cerrar', { duration: 3000 });
         },
         error: (err: HttpErrorResponse) => {
-          this.saving.set(false);
-          this.snackBar.open(extractErrorMessage(err, 'Error al guardar'), 'Cerrar', { duration: 5000 });
+          this.handleSaveError(err, 'Error al guardar');
         }
       });
   }
@@ -1372,9 +1494,7 @@ error: (err: HttpErrorResponse) => {
     const ficha = this.selectedFicha();
     if (!ficha) return;
 
-    if (this.pnmcAxesForm.invalid) {
-      this.pnmcAxesForm.markAllAsTouched();
-      this.snackBar.open('Revisa los campos marcados en los ejes PNMC', 'Cerrar', { duration: 4000 });
+    if (!this.canSave(this.pnmcAxesForm, 'Para guardar los ejes PNMC hay datos por corregir:', 'Eje PNMC')) {
       return;
     }
 
@@ -1387,8 +1507,7 @@ error: (err: HttpErrorResponse) => {
           this.snackBar.open('Ejes PNMC guardados', 'Cerrar', { duration: 3000 });
         },
         error: (err: HttpErrorResponse) => {
-          this.saving.set(false);
-          this.snackBar.open(extractErrorMessage(err, 'Error al guardar'), 'Cerrar', { duration: 5000 });
+          this.handleSaveError(err, 'Error al guardar');
         }
       });
   }
@@ -1416,9 +1535,7 @@ error: (err: HttpErrorResponse) => {
     const ficha = this.selectedFicha();
     if (!ficha) return;
 
-    if (this.actorsForm.invalid) {
-      this.actorsForm.markAllAsTouched();
-      this.snackBar.open('Revisa los campos marcados en los actores', 'Cerrar', { duration: 4000 });
+    if (!this.canSave(this.actorsForm, 'Para guardar los actores hay datos por corregir:', 'Actor')) {
       return;
     }
 
@@ -1431,8 +1548,7 @@ error: (err: HttpErrorResponse) => {
           this.snackBar.open('Actores guardados', 'Cerrar', { duration: 3000 });
         },
         error: (err: HttpErrorResponse) => {
-          this.saving.set(false);
-          this.snackBar.open(extractErrorMessage(err, 'Error al guardar'), 'Cerrar', { duration: 5000 });
+          this.handleSaveError(err, 'Error al guardar');
         }
       });
   }
@@ -1443,6 +1559,101 @@ error: (err: HttpErrorResponse) => {
    */
   fieldError(control: AbstractControl | null, label: string): string | null {
     return describeFieldError(control, label);
+  }
+
+  /**
+   * Comprueba una sección antes de guardar. Si hay campos por corregir: marca todo como tocado
+   * (para que se resalten en rojo), arma el listado de campos con su nombre y motivo, y lleva la
+   * vista al primer campo con problema. Devuelve `true` cuando se puede guardar.
+   */
+  private canSave(form: FormGroup, title: string, itemLabel = 'Registro'): boolean {
+    if (form.valid) {
+      this.formAlert.set(null);
+      return true;
+    }
+
+    form.markAllAsTouched();
+    this.formAlert.set({ title, items: this.collectInvalidFields(form, itemLabel) });
+    this.scrollToFirstInvalidField();
+    return false;
+  }
+
+  /**
+   * Recorre el formulario y devuelve cada campo inválido con su nombre y el motivo. En las
+   * secciones de colección antepone el número del registro ("Actor 2 · Correo electrónico").
+   */
+  private collectInvalidFields(control: AbstractControl, itemLabel: string, prefix = ''): FormAlert['items'] {
+    const items: FormAlert['items'] = [];
+
+    if (control instanceof FormArray) {
+      control.controls.forEach((child, index) => {
+        if (child.invalid) {
+          items.push(...this.collectInvalidFields(child, itemLabel, `${itemLabel} ${index + 1} · `));
+        }
+      });
+
+      return items;
+    }
+
+    if (control instanceof FormGroup) {
+      for (const [name, child] of Object.entries(control.controls)) {
+        if (child.valid) continue;
+
+        if (child instanceof FormArray || child instanceof FormGroup) {
+          items.push(...this.collectInvalidFields(child, itemLabel, prefix));
+        } else {
+          const label = `${prefix}${FIELD_LABELS[name] ?? name}`;
+          items.push({ label, message: describeFieldError(child, label) ?? 'Revisa el valor ingresado.' });
+        }
+      }
+    }
+
+    return items;
+  }
+
+  /** Lleva la vista al primer campo marcado en rojo para que el usuario lo vea de inmediato. */
+  private scrollToFirstInvalidField(): void {
+    setTimeout(() => {
+      const invalid = this.hostRef.nativeElement.querySelector<HTMLElement>(
+        '.mat-mdc-form-field .ng-invalid.ng-touched'
+      );
+      invalid?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      invalid?.focus?.({ preventScroll: true });
+    });
+  }
+
+  /**
+   * Traslada los errores de validación del backend (mismos campos y reglas) al aviso de la
+   * sección, para que el usuario vea qué corregir aunque el problema se detecte en el servidor.
+   */
+  private showServerValidationErrors(error: HttpErrorResponse, fallbackTitle: string): boolean {
+    const body = error?.error as
+      | { detalleResumen?: string; errores?: { etiqueta?: string; mensaje?: string }[] }
+      | undefined;
+    const errores = body?.errores;
+
+    if (!Array.isArray(errores) || errores.length === 0) {
+      return false;
+    }
+
+    this.formAlert.set({
+      title: body?.detalleResumen?.trim() || fallbackTitle,
+      items: errores.map((item) => ({
+        label: item.etiqueta ?? 'Campo',
+        message: item.mensaje ?? 'Revisa el valor ingresado.'
+      }))
+    });
+
+    return true;
+  }
+
+  /** Error de guardado: se muestra el detalle por campo cuando el backend lo envía. */
+  private handleSaveError(error: HttpErrorResponse, fallback: string): void {
+    this.saving.set(false);
+    if (!this.showServerValidationErrors(error, fallback)) {
+      this.formAlert.set(null);
+    }
+    this.snackBar.open(extractErrorMessage(error, fallback), 'Cerrar', { duration: 6000 });
   }
 
   /** Valor en pesos formateado, para mostrarlo como ayuda debajo del campo. */
@@ -1480,7 +1691,11 @@ error: (err: HttpErrorResponse) => {
     this.governanceApiService
       .getDiagnostic(fichaId)
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({ next: (data) => this.diagnosticForm.patchValue(data) });
+      .subscribe({
+        next: (data) => (data ? this.diagnosticForm.patchValue(data) : this.diagnosticForm.reset()),
+        // 404 = la ficha aún no tiene diagnóstico diligenciado: el formulario queda en blanco.
+        error: () => this.diagnosticForm.reset()
+      });
 
     this.governanceApiService
       .getOpportunities(fichaId)

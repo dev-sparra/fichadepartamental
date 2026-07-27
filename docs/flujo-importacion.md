@@ -6,7 +6,8 @@ la información, qué estados existen, cuándo se vuelve visible, cuándo se pue
 si hay errores parciales.
 
 > Archivo oficial: **`ficha_departamental_gobernanza.xlsm`** (misma plantilla que se descarga desde
-> el portal). Es la fuente única de verdad de hojas, columnas y listas.
+> el portal). Es la fuente única de verdad de hojas, columnas y listas. Lo que se valida es el
+> **formato y la estructura**, no el nombre del archivo.
 
 ---
 
@@ -14,8 +15,8 @@ si hay errores parciales.
 
 | # | Etapa | Qué hace el sistema | Resultado si falla |
 |---|-------|---------------------|--------------------|
-| 1 | **Archivo seleccionado** | El usuario elige o arrastra el archivo. El navegador valida extensión, nombre y tamaño antes de subirlo. | No se envía nada al servidor. Mensaje inmediato con la corrección. |
-| 2 | **Validación del formato** | El servidor verifica extensión `.xlsm`, nombre oficial, tamaño (máx. 10 MB) y que el libro se pueda abrir. | Lote **Importación rechazada**. No se guarda ningún dato. |
+| 1 | **Archivo seleccionado** | El usuario elige o arrastra el archivo. El navegador valida extensión y tamaño antes de subirlo. | No se envía nada al servidor. Mensaje inmediato con la corrección. |
+| 2 | **Validación del formato** | El servidor verifica extensión `.xlsm`, tamaño (máx. 10 MB) y que el libro se pueda abrir. **El nombre del archivo es libre**: se acepta renombrado por departamento, fecha o versión. | Lote **Importación rechazada**. No se guarda ningún dato. |
 | 3 | **Validación de la estructura** | Verifica las 7 hojas del Blueprint (`Identificación`, `Diagnóstico ecosistema`, `Oportunidades de cambio`, `Ejes PNMC`, `Actores`, `Indicadores`, `Detalle Indicadores`) y que cada columna esté en su posición con el encabezado esperado. También rechaza la plantilla en blanco. | Lote **Importación rechazada**, indicando hoja y columna. |
 | 4 | **Validación de los datos** | Copia las filas a las tablas de trabajo del lote y compara cada valor contra los catálogos oficiales (departamentos, municipios por departamento, ejes y componentes PNMC, roles por tipo de agente, niveles, años, correos, celulares…). | Las filas con error quedan fuera; se reportan como incidencias. |
 | 5 | **Creación del lote** | Queda el registro de la carga con archivo, fecha, conteos y resultado, consultable en *Historial de lotes*. | — |
@@ -76,9 +77,13 @@ etiqueta funcional con descripción y siguiente paso (`ImportStatusCatalog`).
 
 ## 5. Errores parciales
 
-- Si alguna fila tiene errores de **severidad Error**, no se escribe ningún dato de gobernanza en
-  esa carga y el lote queda como *Importación completada con observaciones*, con el detalle exacto
-  por fila y campo.
+- La importación es **parcial**: las filas correctas se guardan y solo quedan fuera las filas con
+  errores de **severidad Error**, que se listan con el detalle exacto por fila y campo. El lote
+  queda como *Importación completada con observaciones*.
+- La hoja `Identificación` es la excepción: si su fila tiene errores no puede crearse la ficha y no
+  se guarda nada (todas las demás secciones cuelgan de ella).
+- Si **todas** las filas de una sección tienen errores, esa sección no se reemplaza: se conserva lo
+  que ya estaba guardado de una carga anterior en lugar de quedar vacía.
 - Las **observaciones** (severidad Warning, por ejemplo un valor de selección múltiple que no está
   en el catálogo o un celular que no tiene 10 dígitos) **no bloquean** la importación: el dato se
   guarda y se deja la advertencia para revisión.

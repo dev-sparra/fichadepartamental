@@ -9,7 +9,9 @@ public sealed record GovernanceFichaSummaryDto(
     string? MunicipalityName,
     int OpportunitiesCount,
     int AxesCount,
-    int ActorsCount);
+    int ActorsCount,
+    /// <summary>Estado de revisión: Borrador (sin revisar), Aprobado o Devuelto.</summary>
+    string ApprovalStatus);
 
 public sealed record GovernanceFichaDetailDto(
     Guid Id,

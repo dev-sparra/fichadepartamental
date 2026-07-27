@@ -85,7 +85,10 @@ function toneColor(tone: ImportTone | string): string {
       <mat-card class="imp-card">
         <mat-card-header>
           <mat-card-title>Cargar archivo</mat-card-title>
-          <mat-card-subtitle>Solo se admite el archivo oficial {{ officialFileName }}</mat-card-subtitle>
+          <mat-card-subtitle>
+            Debe ser la Ficha Departamental de Gobernanza diligenciada en formato .xlsm (el nombre
+            del archivo puede ser cualquiera)
+          </mat-card-subtitle>
         </mat-card-header>
         <mat-divider />
         <mat-card-content>
@@ -124,7 +127,8 @@ function toneColor(tone: ImportTone | string): string {
                 <strong>Arrastra el archivo aquí</strong> o haz clic para seleccionarlo
               </p>
               <p class="drop-hint">
-                Formato aceptado: {{ officialFileName }} (máx. {{ maxFileSizeMb }} MB)
+                Formato aceptado: archivos .xlsm de la ficha oficial, con cualquier nombre
+                (máx. {{ maxFileSizeMb }} MB)
               </p>
             }
 
@@ -499,10 +503,12 @@ function toneColor(tone: ImportTone | string): string {
                 <mat-panel-title>¿Qué pasa si hay errores parciales?</mat-panel-title>
               </mat-expansion-panel-header>
               <p>
-                Si alguna fila tiene errores, esa información no se guarda y el lote queda como
-                <strong>Importación completada con observaciones</strong>: las secciones correctas se
-                conservan y las filas con errores se listan arriba con la corrección exacta. Al
-                corregir el archivo y cargarlo de nuevo, la ficha se completa sin duplicar datos.
+                La importación es parcial: <strong>las filas correctas sí se guardan</strong> y solo
+                quedan fuera las filas con errores, que se listan arriba con la corrección exacta.
+                El lote queda como <strong>Importación completada con observaciones</strong>. La
+                excepción es la hoja Identificación: si esa fila tiene errores no puede crearse la
+                ficha. Al corregir el archivo y cargarlo de nuevo, la ficha se completa sin duplicar
+                datos.
               </p>
             </mat-expansion-panel>
           </mat-accordion>

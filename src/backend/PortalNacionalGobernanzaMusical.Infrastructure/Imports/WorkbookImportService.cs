@@ -17,8 +17,6 @@ public sealed class WorkbookImportService(
     IImportIssueNarrator issueNarrator,
     ICurrentUserService currentUserService) : IWorkbookImportService
 {
-    private static readonly string[] MultiSelectionSeparator = [", "];
-
     // Reglas de contacto del Actor tomadas del Blueprint (Actores!F número, Actores!G correo).
     private readonly BlueprintValidation? _phoneRule = ResolveActorRule(blueprintProvider, "numeroContacto");
     private readonly BlueprintValidation? _emailRule = ResolveActorRule(blueprintProvider, "correoElectronico");
@@ -135,37 +133,41 @@ public sealed class WorkbookImportService(
             ValidateIndicators(indicators, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
             ValidateIndicatorDetails(indicatorDetails, snapshot, issues, ref validRows, ref invalidRows, ref warningRows, batch.Id);
 
-            if (issues.All(x => x.Severity != ImportIssueCodes.SeverityError))
+            // Importación parcial: se guarda todo lo que está bien y solo quedan fuera las filas
+            // con errores (antes, un único error dejaba la ficha sin crear y el usuario no veía
+            // nada en Gobernanza). Las filas descartadas se listan como incidencias.
+            var rowsInError = ImportRowSelection.BuildRowsInErrorIndex(issues);
+
+            try
             {
-                try
-                {
-                    persistedRecords = await PersistGovernanceDataAsync(
-                        identifications,
-                        diagnostics,
-                        opportunities,
-                        pnmcAxes,
-                        actors,
-                        indicators,
-                        indicatorDetails,
-                        issues,
-                        batch.Id,
-                        cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    // Si falla al guardar, el lote no se marca como rechazado: parte de la ficha
-                    // puede haber quedado guardada y el usuario debe saber qué sección revisar.
-                    issues.Add(CreateIssue(
-                        batch.Id,
-                        ImportIssueCodes.SeverityError,
-                        "Identificación",
-                        null,
-                        null,
-                        ImportIssueCodes.PersistSectionError,
-                        "No fue posible guardar la información de la ficha departamental.",
-                        null,
-                        new ImportIssueContext { TechnicalDetail = Describe(ex) }));
-                }
+                persistedRecords = await PersistGovernanceDataAsync(
+                    identifications,
+                    diagnostics,
+                    opportunities,
+                    pnmcAxes,
+                    actors,
+                    indicators,
+                    indicatorDetails,
+                    snapshot,
+                    rowsInError,
+                    issues,
+                    batch.Id,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // Si falla al guardar, el lote no se marca como rechazado: parte de la ficha
+                // puede haber quedado guardada y el usuario debe saber qué sección revisar.
+                issues.Add(CreateIssue(
+                    batch.Id,
+                    ImportIssueCodes.SeverityError,
+                    "Identificación",
+                    null,
+                    null,
+                    ImportIssueCodes.PersistSectionError,
+                    "No fue posible guardar la información de la ficha departamental.",
+                    null,
+                    new ImportIssueContext { TechnicalDetail = Describe(ex) }));
             }
 
             batch.Status = ImportStatusCatalog.ResolveFinalStatus(
@@ -380,18 +382,33 @@ public sealed class WorkbookImportService(
         IReadOnlyCollection<ImportActorStagingRow> actors,
         IReadOnlyCollection<ImportIndicatorStagingRow> indicators,
         IReadOnlyCollection<ImportIndicatorDetailStagingRow> indicatorDetails,
+        CatalogValidationSnapshot snapshot,
+        IReadOnlySet<(string Sheet, int Row)> rowsInError,
         ICollection<ImportValidationIssue> issues,
         Guid batchId,
         CancellationToken cancellationToken)
     {
         var persisted = 0;
-        var identification = identifications.OrderBy(x => x.SourceRowNumber).FirstOrDefault();
+
+        // La Identificación es la base de la ficha: si su fila tiene errores no hay nada que crear.
+        var identification = identifications
+            .Where(row => !ImportRowSelection.IsRowInError(rowsInError, "Identificación", row.SourceRowNumber))
+            .OrderBy(x => x.SourceRowNumber)
+            .FirstOrDefault();
 
         if (identification is null || identification.FechaLevantamiento is null || string.IsNullOrWhiteSpace(identification.DepartmentName))
         {
             issues.Add(CreateIssue(batchId, "Error", "Identificación", null, null, "PERSIST_IDENTIFICATION_REQUIRED", "No existe una fila válida de Identificación para materializar la ficha departamental.", null));
             return 0;
         }
+
+        // Las filas con error quedan fuera de la importación; el resto sí se guarda.
+        var diagnosticSection = ImportRowSelection.SelectValidRows(diagnostics, "Diagnóstico ecosistema", rowsInError, row => row.SourceRowNumber);
+        var opportunitySection = ImportRowSelection.SelectValidRows(opportunities, "Oportunidades de cambio", rowsInError, row => row.SourceRowNumber);
+        var axisSection = ImportRowSelection.SelectValidRows(pnmcAxes, "Ejes PNMC", rowsInError, row => row.SourceRowNumber);
+        var actorSection = ImportRowSelection.SelectValidRows(actors, "Actores", rowsInError, row => row.SourceRowNumber);
+        var indicatorSection = ImportRowSelection.SelectValidRows(indicators, "Indicadores", rowsInError, row => row.SourceRowNumber);
+        var indicatorDetailSection = ImportRowSelection.SelectValidRows(indicatorDetails, "Detalle Indicadores", rowsInError, row => row.SourceRowNumber);
 
         if (identifications.Count > 1)
         {
@@ -426,7 +443,7 @@ public sealed class WorkbookImportService(
         persisted++;
 
         dbContext.FichaFuentesInformacion.RemoveRange(dbContext.FichaFuentesInformacion.Where(x => x.FichaDepartamentalId == ficha.Id));
-        foreach (var sourceName in SplitMultiValue(identification.InformationSourcesRaw))
+        foreach (var sourceName in MultiValueParser.Split(identification.InformationSourcesRaw, snapshot.InformationSources))
         {
             var sourceId = await ResolveRequiredLookupIdAsync(dbContext.InformationSourceOptions, sourceName, cancellationToken);
             dbContext.FichaFuentesInformacion.Add(new FichaFuenteInformacion
@@ -440,23 +457,42 @@ public sealed class WorkbookImportService(
         // Cada sección se persiste en su propio try-catch: si una falla, se reporta como
         // incidencia pero las anteriores ya quedaron commiteadas y el lote no se marca como
         // "Failed" perdiendo todo el progreso. El usuario verá exactamente qué sección falló.
-        var sectionPersisted = await TryPersistSectionAsync("Diagnóstico ecosistema", batchId, issues, () => ReplaceDiagnosticAsync(ficha, diagnostics, issues, batchId, cancellationToken));
-        if (sectionPersisted && diagnostics.Count > 0) persisted++;
+        // Una sección cuyas filas están todas en error se omite: conserva lo guardado antes.
+        if (diagnosticSection.ShouldReplace)
+        {
+            var sectionSaved = await TryPersistSectionAsync("Diagnóstico ecosistema", batchId, issues, () => ReplaceDiagnosticAsync(ficha, diagnosticSection.Rows, issues, batchId, cancellationToken));
+            if (sectionSaved && diagnosticSection.Rows.Count > 0) persisted++;
+        }
 
-        sectionPersisted = await TryPersistSectionAsync("Oportunidades de cambio", batchId, issues, () => ReplaceOpportunitiesAsync(ficha, opportunities, cancellationToken));
-        if (sectionPersisted) persisted += opportunities.Count;
+        if (opportunitySection.ShouldReplace)
+        {
+            var sectionSaved = await TryPersistSectionAsync("Oportunidades de cambio", batchId, issues, () => ReplaceOpportunitiesAsync(ficha, opportunitySection.Rows, cancellationToken));
+            if (sectionSaved) persisted += opportunitySection.Rows.Count;
+        }
 
-        sectionPersisted = await TryPersistSectionAsync("Ejes PNMC", batchId, issues, () => ReplacePnmcAxesAsync(ficha, pnmcAxes, cancellationToken));
-        if (sectionPersisted) persisted += pnmcAxes.Count;
+        if (axisSection.ShouldReplace)
+        {
+            var sectionSaved = await TryPersistSectionAsync("Ejes PNMC", batchId, issues, () => ReplacePnmcAxesAsync(ficha, axisSection.Rows, snapshot, cancellationToken));
+            if (sectionSaved) persisted += axisSection.Rows.Count;
+        }
 
-        sectionPersisted = await TryPersistSectionAsync("Actores", batchId, issues, () => ReplaceActorsAsync(ficha, actors, cancellationToken));
-        if (sectionPersisted) persisted += actors.Count;
+        if (actorSection.ShouldReplace)
+        {
+            var sectionSaved = await TryPersistSectionAsync("Actores", batchId, issues, () => ReplaceActorsAsync(ficha, actorSection.Rows, snapshot, cancellationToken));
+            if (sectionSaved) persisted += actorSection.Rows.Count;
+        }
 
-        sectionPersisted = await TryPersistSectionAsync("Indicadores", batchId, issues, () => ReplaceIndicatorsAsync(indicators, issues, batchId, cancellationToken));
-        if (sectionPersisted) persisted += indicators.Count;
+        if (indicatorSection.ShouldReplace)
+        {
+            var sectionSaved = await TryPersistSectionAsync("Indicadores", batchId, issues, () => ReplaceIndicatorsAsync(indicatorSection.Rows, snapshot, issues, batchId, cancellationToken));
+            if (sectionSaved) persisted += indicatorSection.Rows.Count;
+        }
 
-        sectionPersisted = await TryPersistSectionAsync("Detalle Indicadores", batchId, issues, () => ReplaceIndicatorDetailsAsync(indicatorDetails, issues, batchId, cancellationToken));
-        if (sectionPersisted) persisted += indicatorDetails.Count;
+        if (indicatorDetailSection.ShouldReplace)
+        {
+            var sectionSaved = await TryPersistSectionAsync("Detalle Indicadores", batchId, issues, () => ReplaceIndicatorDetailsAsync(indicatorDetailSection.Rows, snapshot, issues, batchId, cancellationToken));
+            if (sectionSaved) persisted += indicatorDetailSection.Rows.Count;
+        }
 
         return persisted;
     }
@@ -515,7 +551,7 @@ public sealed class WorkbookImportService(
         }
     }
 
-    private async Task ReplacePnmcAxesAsync(FichaDepartamental ficha, IReadOnlyCollection<ImportPnmcAxisStagingRow> pnmcAxes, CancellationToken cancellationToken)
+    private async Task ReplacePnmcAxesAsync(FichaDepartamental ficha, IReadOnlyCollection<ImportPnmcAxisStagingRow> pnmcAxes, CatalogValidationSnapshot snapshot, CancellationToken cancellationToken)
     {
         var existingIds = await dbContext.EjesPnmc.Where(x => x.FichaDepartamentalId == ficha.Id).Select(x => x.Id).ToListAsync(cancellationToken);
         dbContext.EjesPnmcEnfoques.RemoveRange(dbContext.EjesPnmcEnfoques.Where(x => existingIds.Contains(x.EjePnmcRegistroId)));
@@ -550,7 +586,7 @@ public sealed class WorkbookImportService(
             dbContext.EjesPnmc.Add(entity);
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            foreach (var approachName in SplitMultiValue(row.EnfoquesRaw))
+            foreach (var approachName in MultiValueParser.Split(row.EnfoquesRaw, snapshot.Approaches))
             {
                 var approachId = await ResolveRequiredLookupIdAsync(dbContext.ApproachOptions, approachName, cancellationToken);
                 dbContext.EjesPnmcEnfoques.Add(new EjePnmcRegistroEnfoque
@@ -562,7 +598,7 @@ public sealed class WorkbookImportService(
         }
     }
 
-    private async Task ReplaceActorsAsync(FichaDepartamental ficha, IReadOnlyCollection<ImportActorStagingRow> actors, CancellationToken cancellationToken)
+    private async Task ReplaceActorsAsync(FichaDepartamental ficha, IReadOnlyCollection<ImportActorStagingRow> actors, CatalogValidationSnapshot snapshot, CancellationToken cancellationToken)
     {
         var existingIds = await dbContext.Actores.Where(x => x.FichaDepartamentalId == ficha.Id).Select(x => x.Id).ToListAsync(cancellationToken);
         dbContext.ActorRolesEcosistema.RemoveRange(dbContext.ActorRolesEcosistema.Where(x => existingIds.Contains(x.ActorId)));
@@ -585,7 +621,7 @@ public sealed class WorkbookImportService(
             dbContext.Actores.Add(actor);
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            foreach (var roleName in SplitMultiValue(row.EcosystemRolesRaw))
+            foreach (var roleName in MultiValueParser.Split(row.EcosystemRolesRaw, RolesFor(snapshot, row.AgentTypeName)))
             {
                 var roleId = await ResolveRequiredEcosystemRoleIdAsync(agentTypeId, roleName, cancellationToken);
                 dbContext.ActorRolesEcosistema.Add(new ActorRolEcosistema
@@ -595,7 +631,7 @@ public sealed class WorkbookImportService(
                 });
             }
 
-            foreach (var levelName in SplitMultiValue(row.TerritorialLevelsRaw))
+            foreach (var levelName in MultiValueParser.Split(row.TerritorialLevelsRaw, snapshot.TerritorialLevels))
             {
                 var levelId = await ResolveRequiredLookupIdAsync(dbContext.TerritorialLevelOptions, levelName, cancellationToken);
                 dbContext.ActorNivelesTerritoriales.Add(new ActorNivelTerritorial
@@ -607,11 +643,11 @@ public sealed class WorkbookImportService(
         }
     }
 
-    private async Task ReplaceIndicatorsAsync(IReadOnlyCollection<ImportIndicatorStagingRow> indicators, ICollection<ImportValidationIssue> issues, Guid batchId, CancellationToken cancellationToken)
+    private async Task ReplaceIndicatorsAsync(IReadOnlyCollection<ImportIndicatorStagingRow> indicators, CatalogValidationSnapshot snapshot, ICollection<ImportValidationIssue> issues, Guid batchId, CancellationToken cancellationToken)
     {
         foreach (var row in indicators)
         {
-            var departmentNames = SplitMultiValue(row.DepartmentsRaw);
+            var departmentNames = MultiValueParser.Split(row.DepartmentsRaw, snapshot.Departments);
 
             var indicatorDefinition = await dbContext.IndicatorDefinitions.SingleOrDefaultAsync(x => x.IndicatorName == row.IndicatorName, cancellationToken);
             if (indicatorDefinition is null)
@@ -674,12 +710,12 @@ public sealed class WorkbookImportService(
         }
     }
 
-    private async Task ReplaceIndicatorDetailsAsync(IReadOnlyCollection<ImportIndicatorDetailStagingRow> indicatorDetails, ICollection<ImportValidationIssue> issues, Guid batchId, CancellationToken cancellationToken)
+    private async Task ReplaceIndicatorDetailsAsync(IReadOnlyCollection<ImportIndicatorDetailStagingRow> indicatorDetails, CatalogValidationSnapshot snapshot, ICollection<ImportValidationIssue> issues, Guid batchId, CancellationToken cancellationToken)
     {
         foreach (var row in indicatorDetails)
         {
-            var departmentNames = SplitMultiValue(row.DepartmentsRaw);
-            var monthNames = SplitMultiValue(row.MonthsRaw);
+            var departmentNames = MultiValueParser.Split(row.DepartmentsRaw, snapshot.Departments);
+            var monthNames = MultiValueParser.Split(row.MonthsRaw, snapshot.Months);
 
             // Si el indicador no existe en el catálogo, SingleAsync lanza InvalidOperationException,
             // que se captura en el catch general del ImportAsync como IMPORT_EXCEPTION.
@@ -1065,7 +1101,6 @@ public sealed class WorkbookImportService(
 
             if (!string.IsNullOrWhiteSpace(row.AgentTypeName) && !string.IsNullOrWhiteSpace(row.EcosystemRolesRaw))
             {
-                var selectedRoles = SplitMultiValue(row.EcosystemRolesRaw);
                 if (!snapshot.EcosystemRolesByAgentType.TryGetValue(row.AgentTypeName, out var roles))
                 {
                     rowHasError = true;
@@ -1073,7 +1108,8 @@ public sealed class WorkbookImportService(
                 }
                 else
                 {
-                    foreach (var selectedRole in selectedRoles)
+                    // El parseo reconoce los roles del catálogo aunque su nombre contenga ", ".
+                    foreach (var selectedRole in MultiValueParser.Split(row.EcosystemRolesRaw, roles))
                     {
                         if (!roles.Contains(selectedRole))
                         {
@@ -1204,7 +1240,7 @@ public sealed class WorkbookImportService(
         }
 
         var warnings = 0;
-        foreach (var token in SplitMultiValue(rawValue))
+        foreach (var token in MultiValueParser.Split(rawValue, validValues))
         {
             if (!validValues.Contains(token))
             {
@@ -1331,11 +1367,13 @@ public sealed class WorkbookImportService(
             .First(field => field.Key == fieldKey).Validation;
     }
 
-    private static string[] SplitMultiValue(string? rawValue)
+    /// <summary>Roles válidos para el tipo de agente de la fila (vacío si el tipo no es válido).</summary>
+    private static IReadOnlyCollection<string> RolesFor(CatalogValidationSnapshot snapshot, string? agentTypeName)
     {
-        return string.IsNullOrWhiteSpace(rawValue)
-            ? []
-            : rawValue.Split(MultiSelectionSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return !string.IsNullOrWhiteSpace(agentTypeName)
+            && snapshot.EcosystemRolesByAgentType.TryGetValue(agentTypeName, out var roles)
+                ? roles
+                : [];
     }
 
     private static ImportValidationIssue CreateIssue(

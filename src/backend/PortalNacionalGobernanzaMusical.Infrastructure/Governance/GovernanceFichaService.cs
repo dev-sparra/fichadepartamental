@@ -14,6 +14,10 @@ public sealed class GovernanceFichaService(
     ICurrentUserService currentUserService) : IGovernanceFichaService
 {
     private const string EntityName = "FichaDepartamental";
+
+    /// <summary>Estado de una ficha que todavía no ha pasado por revisión del líder.</summary>
+    private const string DraftApprovalStatus = "Borrador";
+
     private const string RoleGestorDepartamental = "Gestor Departamental";
     private const string RoleLiderGobernanza = "Líder de Gobernanza";
     private const string RoleAdministrador = "Administrador";
@@ -51,7 +55,13 @@ public sealed class GovernanceFichaService(
                 x.Municipality != null ? x.Municipality.Name : null,
                 x.OportunidadesCambio.Count,
                 x.EjesPnmc.Count,
-                x.Actores.Count))
+                x.Actores.Count,
+                // Una ficha sin revisión (por ejemplo, recién importada) es un borrador.
+                dbContext.Set<ApprovalRecord>()
+                    .Where(record => record.FichaDepartamentalId == x.Id)
+                    .OrderByDescending(record => record.CreatedAtUtc)
+                    .Select(record => record.Status)
+                    .FirstOrDefault() ?? DraftApprovalStatus))
             .ToArrayAsync(cancellationToken);
     }
 

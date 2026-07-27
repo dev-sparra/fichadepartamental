@@ -1,14 +1,12 @@
 /**
  * Reglas de aceptación del archivo de importación, espejo de `ImportFileRules` del backend.
- * Se aplican antes de subir el archivo para avisar de inmediato y evitar cargas inútiles; el
- * servidor las vuelve a aplicar como validación definitiva.
+ * Se valida el **formato** (.xlsm) y el tamaño; el **nombre del archivo es libre**, porque en
+ * territorio es común renombrarlo sin alterar su contenido. La estructura (hojas y columnas) la
+ * verifica el servidor, que es la validación definitiva.
  */
 export const OFFICIAL_IMPORT_FILE_NAME = 'ficha_departamental_gobernanza.xlsm';
 export const OFFICIAL_IMPORT_EXTENSION = '.xlsm';
 export const MAX_IMPORT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-
-/** Nombre oficial admitiendo sufijos del navegador ("(1)") o del territorio ("_antioquia"). */
-const OFFICIAL_NAME_PATTERN = /^ficha[\s_-]*departamental[\s_-]*gobernanza([\s_\-(].*)?$/i;
 
 export interface ImportFileCheck {
   valid: boolean;
@@ -16,11 +14,6 @@ export interface ImportFileCheck {
   message?: string;
   /** Acción concreta para corregirlo. */
   hint?: string;
-}
-
-function baseName(fileName: string): string {
-  const lastDot = fileName.lastIndexOf('.');
-  return (lastDot > 0 ? fileName.slice(0, lastDot) : fileName).trim();
 }
 
 function extension(fileName: string): string {
@@ -50,15 +43,7 @@ export function checkImportFile(file: File | null | undefined): ImportFileCheck 
     return {
       valid: false,
       message: 'El archivo seleccionado no corresponde al formato oficial de la Ficha Departamental de Gobernanza.',
-      hint: `Por favor utilice el archivo oficial ${OFFICIAL_IMPORT_FILE_NAME}. Puede descargarlo con el botón "Descargar plantilla".`
-    };
-  }
-
-  if (!OFFICIAL_NAME_PATTERN.test(baseName(file.name))) {
-    return {
-      valid: false,
-      message: 'El nombre del archivo no corresponde al de la Ficha Departamental de Gobernanza oficial.',
-      hint: `Renombre el archivo como ${OFFICIAL_IMPORT_FILE_NAME} o descargue de nuevo la plantilla oficial.`
+      hint: `Debe ser un archivo ${OFFICIAL_IMPORT_EXTENSION} diligenciado sobre la plantilla oficial. El nombre del archivo puede ser cualquiera.`
     };
   }
 

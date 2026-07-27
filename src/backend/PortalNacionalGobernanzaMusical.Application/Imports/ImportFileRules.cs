@@ -1,21 +1,18 @@
-using System.Text.RegularExpressions;
-
 namespace PortalNacionalGobernanzaMusical.Application.Imports;
 
 /// <summary>
-/// Reglas de aceptación del archivo de importación. Solo se admite el archivo oficial
-/// <c>ficha_departamental_gobernanza.xlsm</c>: misma extensión y mismo nombre base (se tolera el
-/// sufijo que agregan los navegadores al descargar dos veces, p. ej. "(1)", y un sufijo
-/// descriptivo del territorio, p. ej. "ficha_departamental_gobernanza_antioquia.xlsm").
+/// Reglas de aceptación del archivo de importación. Lo que se exige es el <b>formato</b>: un libro
+/// <c>.xlsm</c> con la estructura de la Ficha Departamental de Gobernanza (hojas y columnas), que
+/// verifica <c>WorkbookStructureValidator</c>.
+/// <para>El <b>nombre del archivo es libre</b>: es habitual que en territorio se renombre el
+/// archivo (por departamento, fecha o versión) sin alterar su contenido, y rechazarlo por el
+/// nombre bloqueaba importaciones perfectamente válidas.</para>
 /// <para>Estas mismas reglas se replican en el frontend para avisar antes de subir el archivo.</para>
 /// </summary>
-public static partial class ImportFileRules
+public static class ImportFileRules
 {
-    /// <summary>Nombre del archivo oficial que se entrega como plantilla.</summary>
+    /// <summary>Nombre del archivo oficial que se entrega como plantilla (referencia para los mensajes).</summary>
     public const string OfficialFileName = "ficha_departamental_gobernanza.xlsm";
-
-    /// <summary>Nombre base exigido (sin extensión).</summary>
-    public const string OfficialBaseName = "ficha_departamental_gobernanza";
 
     /// <summary>Única extensión admitida: el archivo oficial tiene macros.</summary>
     public const string OfficialExtension = ".xlsm";
@@ -23,29 +20,15 @@ public static partial class ImportFileRules
     /// <summary>Tamaño máximo admitido (10 MB), alineado con el mensaje de la interfaz.</summary>
     public const long MaxFileSizeBytes = 10L * 1024 * 1024;
 
-    [GeneratedRegex(@"^ficha[\s_-]*departamental[\s_-]*gobernanza([\s_\-(].*)?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex OfficialNamePattern();
-
     public static bool HasOfficialExtension(string? fileName)
     {
         return !string.IsNullOrWhiteSpace(fileName)
             && Path.GetExtension(fileName).Equals(OfficialExtension, StringComparison.OrdinalIgnoreCase);
     }
 
-    public static bool HasOfficialName(string? fileName)
-    {
-        if (string.IsNullOrWhiteSpace(fileName))
-        {
-            return false;
-        }
-
-        var baseName = Path.GetFileNameWithoutExtension(fileName).Trim();
-        return OfficialNamePattern().IsMatch(baseName);
-    }
-
     /// <summary>
-    /// Valida nombre, extensión y tamaño. Devuelve las incidencias funcionales encontradas
-    /// (lista vacía cuando el archivo es aceptable).
+    /// Valida extensión y tamaño (el nombre es libre). Devuelve las incidencias funcionales
+    /// encontradas; lista vacía cuando el archivo es aceptable.
     /// </summary>
     public static IReadOnlyList<ImportFileRejection> Validate(string? fileName, long fileSizeBytes)
     {
@@ -69,17 +52,8 @@ public static partial class ImportFileRules
             rejections.Add(new ImportFileRejection(
                 ImportIssueCodes.FileExtensionInvalid,
                 "El archivo seleccionado no corresponde al formato oficial de la Ficha Departamental de Gobernanza.",
-                $"Un archivo con extensión {OfficialExtension} (libro de Excel con macros).",
-                $"Por favor utilice el archivo oficial {OfficialFileName}. Puede descargarlo con el botón \"Descargar plantilla\".",
-                displayName));
-        }
-        else if (!HasOfficialName(fileName))
-        {
-            rejections.Add(new ImportFileRejection(
-                ImportIssueCodes.FileNameInvalid,
-                $"El nombre del archivo no corresponde al de la Ficha Departamental de Gobernanza oficial.",
-                $"Un archivo llamado {OfficialFileName}.",
-                $"Renombre el archivo como {OfficialFileName} o descargue de nuevo la plantilla oficial y diligéncielas sobre ella.",
+                $"Un archivo con extensión {OfficialExtension} (libro de Excel con macros). El nombre del archivo puede ser cualquiera.",
+                $"Diligencie la información sobre el archivo oficial {OfficialFileName} y cárguelo sin convertirlo a otro formato. Puede descargarlo con el botón \"Descargar plantilla\".",
                 displayName));
         }
 
