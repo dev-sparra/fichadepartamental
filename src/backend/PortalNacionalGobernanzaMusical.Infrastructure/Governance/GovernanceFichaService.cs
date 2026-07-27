@@ -5,6 +5,7 @@ using PortalNacionalGobernanzaMusical.Application.Common;
 using PortalNacionalGobernanzaMusical.Application.Governance;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
 using PortalNacionalGobernanzaMusical.Persistence;
+using PortalNacionalGobernanzaMusical.Shared.Constants;
 
 namespace PortalNacionalGobernanzaMusical.Infrastructure.Governance;
 
@@ -18,9 +19,9 @@ public sealed class GovernanceFichaService(
     /// <summary>Estado de una ficha que todavía no ha pasado por revisión del líder.</summary>
     private const string DraftApprovalStatus = "Borrador";
 
-    private const string RoleGestorDepartamental = "Gestor Departamental";
-    private const string RoleLiderGobernanza = "Líder de Gobernanza";
-    private const string RoleAdministrador = "Administrador";
+    private const string RoleGestorDepartamental = SecurityRoleNames.GestorDepartamental;
+    private const string RoleLiderGobernanza = SecurityRoleNames.LiderGobernanza;
+    private const string RoleAdministrador = SecurityRoleNames.Administrador;
 
     public async Task<IReadOnlyCollection<GovernanceFichaSummaryDto>> GetFichasAsync(CancellationToken cancellationToken = default)
     {
@@ -328,6 +329,7 @@ public sealed class GovernanceFichaService(
     public async Task<IReadOnlyCollection<GovernancePnmcAxisDto>> ReplacePnmcAxesAsync(Guid fichaId, IReadOnlyCollection<GovernancePnmcAxisDto> request, CancellationToken cancellationToken = default)
     {
         GovernanceRequestValidation.EnsureValid(request);
+        await EnsureComponentsBelongToTheirAxisAsync(request, cancellationToken);
         await GetFichaWithAccessCheckAsync(fichaId, cancellationToken);
         var before = await GetPnmcAxesAsync(fichaId, cancellationToken);
         var existingIds = await dbContext.EjesPnmc.Where(x => x.FichaDepartamentalId == fichaId).Select(x => x.Id).ToListAsync(cancellationToken);
@@ -390,6 +392,7 @@ public sealed class GovernanceFichaService(
     public async Task<IReadOnlyCollection<GovernanceActorDto>> ReplaceActorsAsync(Guid fichaId, IReadOnlyCollection<GovernanceActorDto> request, CancellationToken cancellationToken = default)
     {
         GovernanceRequestValidation.EnsureValid(request);
+        await EnsureRolesBelongToTheirAgentTypeAsync(request, cancellationToken);
         await GetFichaWithAccessCheckAsync(fichaId, cancellationToken);
         var before = await GetActorsAsync(fichaId, cancellationToken);
         var existingIds = await dbContext.Actores.Where(x => x.FichaDepartamentalId == fichaId).Select(x => x.Id).ToListAsync(cancellationToken);
@@ -435,6 +438,101 @@ public sealed class GovernanceFichaService(
         var actors = await GetActorsAsync(fichaId, cancellationToken);
         await auditService.LogAsync(EntityName, fichaId, "Actualizar actores", JsonSerializer.Serialize(before), JsonSerializer.Serialize(actors), cancellationToken);
         return actors;
+    }
+
+    /// <summary>
+    /// Comprueba que cada Componente PNMC pertenezca al Eje elegido en su misma fila. Evita que una
+    /// petición manual —o un formulario que quedó con la lista anterior en pantalla— guarde una
+    /// combinación que no existe en el catálogo oficial.
+    /// </summary>
+    private async Task EnsureComponentsBelongToTheirAxisAsync(
+        IReadOnlyCollection<GovernancePnmcAxisDto> axes,
+        CancellationToken cancellationToken)
+    {
+        var componentIds = axes
+            .Where(axis => axis.PnmcComponentId is > 0)
+            .Select(axis => axis.PnmcComponentId!.Value)
+            .Distinct()
+            .ToArray();
+
+        if (componentIds.Length == 0)
+        {
+            return;
+        }
+
+        var componentAxisById = await dbContext.PnmcComponents.AsNoTracking()
+            .Where(component => componentIds.Contains(component.Id))
+            .ToDictionaryAsync(component => component.Id, component => component.PnmcAxisId, cancellationToken);
+
+        var errors = new List<FieldValidationError>();
+        var position = 0;
+
+        foreach (var axis in axes)
+        {
+            position++;
+
+            if (axis.PnmcComponentId is not > 0 || axis.PnmcAxisId is not > 0)
+            {
+                continue;
+            }
+
+            if (!componentAxisById.TryGetValue(axis.PnmcComponentId.Value, out var ownerAxisId) ||
+                ownerAxisId != axis.PnmcAxisId.Value)
+            {
+                errors.Add(new FieldValidationError(
+                    $"pnmcAxes[{position - 1}].pnmcComponentId",
+                    $"Eje PNMC {position} · Componente PNMC",
+                    "El componente seleccionado no corresponde al eje PNMC elegido. Vuelve a elegirlo en la lista."));
+            }
+        }
+
+        DomainValidationException.ThrowIfAny("Revisa la información de los ejes PNMC antes de guardar.", errors);
+    }
+
+    /// <summary>
+    /// Comprueba que cada Rol en el ecosistema pertenezca al Tipo de agente elegido en su fila.
+    /// </summary>
+    private async Task EnsureRolesBelongToTheirAgentTypeAsync(
+        IReadOnlyCollection<GovernanceActorDto> actors,
+        CancellationToken cancellationToken)
+    {
+        var roleIds = actors.SelectMany(actor => actor.EcosystemRoleIds).Distinct().ToArray();
+
+        if (roleIds.Length == 0)
+        {
+            return;
+        }
+
+        var agentTypeByRole = await dbContext.EcosystemRoles.AsNoTracking()
+            .Where(role => roleIds.Contains(role.Id))
+            .ToDictionaryAsync(role => role.Id, role => role.AgentTypeId, cancellationToken);
+
+        var errors = new List<FieldValidationError>();
+        var position = 0;
+
+        foreach (var actor in actors)
+        {
+            position++;
+
+            if (actor.AgentTypeId is not > 0)
+            {
+                continue;
+            }
+
+            var mismatched = actor.EcosystemRoleIds
+                .Where(roleId => !agentTypeByRole.TryGetValue(roleId, out var ownerId) || ownerId != actor.AgentTypeId.Value)
+                .ToArray();
+
+            if (mismatched.Length > 0)
+            {
+                errors.Add(new FieldValidationError(
+                    $"actors[{position - 1}].ecosystemRoleIds",
+                    $"Actor {position} · Rol en el ecosistema",
+                    "Uno de los roles seleccionados no corresponde al tipo de agente elegido. Vuelve a elegirlos en la lista."));
+            }
+        }
+
+        DomainValidationException.ThrowIfAny("Revisa la información de los actores antes de guardar.", errors);
     }
 
     private static GovernanceDiagnosticDto MapDiagnostic(DiagnosticoEcosistema x)

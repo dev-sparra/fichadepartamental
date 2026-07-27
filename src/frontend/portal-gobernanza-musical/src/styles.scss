@@ -308,10 +308,47 @@ a {
 }
 
 .mat-mdc-autocomplete-panel {
+  background-color: #ffffff !important;
   border: 1px solid var(--color-border-light) !important;
   border-radius: var(--radius-lg) !important;
   box-shadow: var(--shadow-lg) !important;
   padding: var(--space-2) !important;
+}
+
+/* ═══════════════════════════════════════════
+   SELECTOR DE FECHA (calendario)
+   ═══════════════════════════════════════════
+   El calendario se abre en un panel flotante: se le da la misma superficie sólida que a los
+   demás desplegables para que se lea sobre el contenido de la página. */
+
+.mat-datepicker-content {
+  background-color: #ffffff !important;
+  color: var(--color-on-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-xl) !important;
+  box-shadow: var(--shadow-xl) !important;
+}
+
+.mat-datepicker-content .mat-calendar {
+  background-color: transparent;
+}
+
+.mat-calendar-body-cell-content {
+  border-radius: var(--radius-full);
+}
+
+.mat-calendar-body-selected {
+  background-color: var(--color-primary-600) !important;
+  color: #ffffff !important;
+}
+
+.mat-calendar-body-cell:not(.mat-calendar-body-disabled):hover
+  > .mat-calendar-body-cell-content:not(.mat-calendar-body-selected) {
+  background-color: var(--color-hover) !important;
+}
+
+.mat-datepicker-toggle {
+  color: var(--color-on-surface-secondary);
 }
 
 .mat-mdc-option {

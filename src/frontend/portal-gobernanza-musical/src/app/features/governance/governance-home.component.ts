@@ -44,10 +44,13 @@ import {
   MOBILE_PHONE_DIGITS,
   copAmountValidator,
   dateRangeValidator,
+  dependentPairValidator,
   describeFieldError,
   emailFormatValidator,
+  isRowFilled,
   mobilePhoneValidator,
-  requiredTextValidator
+  requiredTextValidator,
+  requiredWhenRowFilledValidator
 } from '../../shared/validators/portal-validators';
 import {
   CatalogOption,
@@ -317,7 +320,7 @@ interface FormAlert {
                       />
                       <mat-datepicker-toggle matIconSuffix [for]="fechaLevantamientoPicker" />
                       <mat-datepicker #fechaLevantamientoPicker />
-                      <mat-hint>Fecha en que se realizó el levantamiento (dd/mm/aaaa)</mat-hint>
+                      <mat-hint>Escríbela como dd/mm/aaaa o elígela en el calendario</mat-hint>
                       @if (fieldError(identificationForm.controls.fechaLevantamiento, 'La fecha de levantamiento'); as error) {
                         <mat-error>{{ error }}</mat-error>
                       }
@@ -631,19 +634,33 @@ interface FormAlert {
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Eje PNMC</mat-label>
-                              <mat-select formControlName="pnmcAxisId" (selectionChange)="loadPnmcComponents($index)">
+                              <mat-select formControlName="pnmcAxisId" (selectionChange)="onPnmcAxisChange($index)">
+                                <mat-option [value]="null">Sin eje</mat-option>
                                 @for (option of pnmcAxisOptions(); track option.id) {
                                   <mat-option [value]="option.id">{{ option.name }}</mat-option>
                                 }
                               </mat-select>
+                              @if (fieldError(group.get('pnmcAxisId'), 'El eje PNMC'); as error) {
+                                <mat-error>{{ error }}</mat-error>
+                              }
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Componente PNMC</mat-label>
                               <mat-select formControlName="pnmcComponentId">
-                                @for (option of pnmcComponentOptions()[$index]; track option.id) {
+                                @for (option of componentsFor(group.get('pnmcAxisId')?.value); track option.id) {
                                   <mat-option [value]="option.id">{{ option.name }}</mat-option>
                                 }
                               </mat-select>
+                              <mat-hint>
+                                @if (group.get('pnmcAxisId')?.value) {
+                                  Componentes del eje seleccionado
+                                } @else {
+                                  Selecciona primero el eje PNMC
+                                }
+                              </mat-hint>
+                              @if (fieldError(group.get('pnmcComponentId'), 'El componente PNMC'); as error) {
+                                <mat-error>{{ error }}</mat-error>
+                              }
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Acción Estratégica</mat-label>
@@ -796,19 +813,33 @@ interface FormAlert {
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Tipo de agente (categoría)</mat-label>
-                              <mat-select formControlName="agentTypeId" (selectionChange)="loadActorRoles($index)">
+                              <mat-select formControlName="agentTypeId" (selectionChange)="onAgentTypeChange($index)">
+                                <mat-option [value]="null">Sin tipo de agente</mat-option>
                                 @for (option of agentTypeOptions(); track option.id) {
                                   <mat-option [value]="option.id">{{ option.name }}</mat-option>
                                 }
                               </mat-select>
+                              @if (fieldError(group.get('agentTypeId'), 'El tipo de agente'); as error) {
+                                <mat-error>{{ error }}</mat-error>
+                              }
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Rol en el ecosistema</mat-label>
                               <mat-select formControlName="ecosystemRoleIds" multiple>
-                                @for (option of ecosystemRoleOptions()[$index]; track option.id) {
+                                @for (option of rolesFor(group.get('agentTypeId')?.value); track option.id) {
                                   <mat-option [value]="option.id">{{ option.name }}</mat-option>
                                 }
                               </mat-select>
+                              <mat-hint>
+                                @if (group.get('agentTypeId')?.value) {
+                                  Roles del tipo de agente seleccionado
+                                } @else {
+                                  Selecciona primero el tipo de agente
+                                }
+                              </mat-hint>
+                              @if (fieldError(group.get('ecosystemRoleIds'), 'El rol en el ecosistema'); as error) {
+                                <mat-error>{{ error }}</mat-error>
+                              }
                             </mat-form-field>
                             <mat-form-field appearance="outline">
                               <mat-label>Nivel territorial</mat-label>
@@ -1040,8 +1071,16 @@ export class GovernanceHomeComponent {
   readonly proposalStatusOptions = signal<CatalogOption[]>([]);
   readonly agentTypeOptions = signal<CatalogOption[]>([]);
   readonly territorialLevelOptions = signal<CatalogOption[]>([]);
+  /**
+   * Listas dependientes indexadas por el identificador del padre (eje PNMC y tipo de agente), no
+   * por la posición de la fila: así sobreviven a agregar o eliminar filas y se comparten entre
+   * las que eligen el mismo padre.
+   */
   readonly pnmcComponentOptions = signal<Record<number, PnmcComponentCatalogOption[]>>({});
   readonly ecosystemRoleOptions = signal<Record<number, EcosystemRoleCatalogOption[]>>({});
+
+  /** Referencia estable para las filas sin padre elegido (evita recrear el arreglo en cada ciclo). */
+  private readonly noOptions: CatalogOption[] = [];
 
   readonly saving = signal(false);
   readonly isDraft = signal(false);
@@ -1459,7 +1498,7 @@ error: (err: HttpErrorResponse) => {
 
     this.saving.set(true);
     this.governanceApiService
-      .replaceOpportunities(ficha.id, this.opportunityGroups.getRawValue() as GovernanceOpportunity[])
+      .replaceOpportunities(ficha.id, this.filledRows<GovernanceOpportunity>(this.opportunityGroups))
       .subscribe({
         next: () => {
           this.saving.set(false);
@@ -1500,7 +1539,7 @@ error: (err: HttpErrorResponse) => {
 
     this.saving.set(true);
     this.governanceApiService
-      .replacePnmcAxes(ficha.id, this.pnmcAxisGroups.getRawValue() as GovernancePnmcAxis[])
+      .replacePnmcAxes(ficha.id, this.filledRows<GovernancePnmcAxis>(this.pnmcAxisGroups))
       .subscribe({
         next: () => {
           this.saving.set(false);
@@ -1541,7 +1580,7 @@ error: (err: HttpErrorResponse) => {
 
     this.saving.set(true);
     this.governanceApiService
-      .replaceActors(ficha.id, this.actorGroups.getRawValue() as GovernanceActor[])
+      .replaceActors(ficha.id, this.filledRows<GovernanceActor>(this.actorGroups))
       .subscribe({
         next: () => {
           this.saving.set(false);
@@ -1559,6 +1598,14 @@ error: (err: HttpErrorResponse) => {
    */
   fieldError(control: AbstractControl | null, label: string): string | null {
     return describeFieldError(control, label);
+  }
+
+  /**
+   * Filas de la sección que sí se envían: las que están completamente en blanco se descartan, para
+   * que la fila vacía que el formulario muestra por comodidad no se guarde como un registro.
+   */
+  private filledRows<T>(array: FormArray): T[] {
+    return array.controls.filter((group) => isRowFilled(group)).map((group) => group.getRawValue() as T);
   }
 
   /**
@@ -1669,22 +1716,68 @@ error: (err: HttpErrorResponse) => {
     }
   }
 
-  loadPnmcComponents(index: number): void {
-    const axisId = this.pnmcAxisGroups.at(index)?.get('pnmcAxisId')?.value as number | null;
-    if (!axisId) return;
+  /** Componentes disponibles para el eje elegido en la fila. */
+  componentsFor(axisId: unknown): PnmcComponentCatalogOption[] {
+    return typeof axisId === 'number' ? this.pnmcComponentOptions()[axisId] ?? this.noOptions : this.noOptions;
+  }
+
+  /** Roles disponibles para el tipo de agente elegido en la fila. */
+  rolesFor(agentTypeId: unknown): EcosystemRoleCatalogOption[] {
+    return typeof agentTypeId === 'number'
+      ? this.ecosystemRoleOptions()[agentTypeId] ?? this.noOptions
+      : this.noOptions;
+  }
+
+  /**
+   * Al cambiar el eje se limpia el componente: el que estuviera elegido pertenecía al eje anterior
+   * y ya no aparece en la lista.
+   */
+  onPnmcAxisChange(index: number): void {
+    const group = this.pnmcAxisGroups.at(index);
+    if (!group) return;
+
+    group.get('pnmcComponentId')?.setValue(null);
+    this.loadPnmcComponents(group.get('pnmcAxisId')?.value as number | null);
+  }
+
+  /** Al cambiar el tipo de agente se limpian los roles, que dependían del tipo anterior. */
+  onAgentTypeChange(index: number): void {
+    const group = this.actorGroups.at(index);
+    if (!group) return;
+
+    group.get('ecosystemRoleIds')?.setValue([]);
+    this.loadActorRoles(group.get('agentTypeId')?.value as number | null);
+  }
+
+  private loadPnmcComponents(axisId: number | null): void {
+    if (!axisId || this.pnmcComponentOptions()[axisId]) return;
     this.catalogsApiService.getPnmcComponents(axisId).subscribe({
       next: (options) =>
-        this.pnmcComponentOptions.update((state) => ({ ...state, [index]: options }))
+        this.pnmcComponentOptions.update((state) => ({ ...state, [axisId]: options }))
     });
   }
 
-  loadActorRoles(index: number): void {
-    const agentTypeId = this.actorGroups.at(index)?.get('agentTypeId')?.value as number | null;
-    if (!agentTypeId) return;
+  private loadActorRoles(agentTypeId: number | null): void {
+    if (!agentTypeId || this.ecosystemRoleOptions()[agentTypeId]) return;
     this.catalogsApiService.getEcosystemRoles(agentTypeId).subscribe({
       next: (options) =>
-        this.ecosystemRoleOptions.update((state) => ({ ...state, [index]: options }))
+        this.ecosystemRoleOptions.update((state) => ({ ...state, [agentTypeId]: options }))
     });
+  }
+
+  /**
+   * Carga las listas dependientes de las filas ya diligenciadas. Sin esto, al abrir una ficha
+   * guardada los campos Componente PNMC y Rol en el ecosistema aparecían vacíos: el valor estaba
+   * en el formulario, pero la lista de opciones donde buscarlo todavía no se había pedido.
+   */
+  private loadDependentOptionsForLoadedRows(): void {
+    for (const group of this.pnmcAxisGroups.controls) {
+      this.loadPnmcComponents(group.get('pnmcAxisId')?.value as number | null);
+    }
+
+    for (const group of this.actorGroups.controls) {
+      this.loadActorRoles(group.get('agentTypeId')?.value as number | null);
+    }
   }
 
   private loadSections(fichaId: string): void {
@@ -1708,14 +1801,20 @@ error: (err: HttpErrorResponse) => {
       .getPnmcAxes(fichaId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (items) => this.replaceArray(this.pnmcAxisGroups, items, () => this.createPnmcAxisGroup())
+        next: (items) => {
+          this.replaceArray(this.pnmcAxisGroups, items, () => this.createPnmcAxisGroup());
+          this.loadDependentOptionsForLoadedRows();
+        }
       });
 
     this.governanceApiService
       .getActors(fichaId)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (items) => this.replaceArray(this.actorGroups, items, () => this.createActorGroup())
+        next: (items) => {
+          this.replaceArray(this.actorGroups, items, () => this.createActorGroup());
+          this.loadDependentOptionsForLoadedRows();
+        }
       });
   }
 
@@ -1751,40 +1850,64 @@ error: (err: HttpErrorResponse) => {
   }
 
   private createPnmcAxisGroup() {
-    return this.formBuilder.group({
-      id: [null as string | null],
-      descripcionHallazgo: [''],
-      pnmcAxisId: [null as number | null],
-      pnmcComponentId: [null as number | null],
-      accionEstrategica: [''],
-      politicaPriorizada: [''],
-      armonizacionPnc: [''],
-      armonizacionPnd: [''],
-      armonizacionInternacional: [''],
-      priorityLevelOptionId: [null as number | null],
-      aliadosResponsables: [''],
-      fuentesFinanciacion: [''],
-      valorPropuestaCop: [null as number | null, [copAmountValidator()]],
-      approachOptionIds: [[] as number[]],
-      descripcion: [''],
-      scheduleOptionId: [null as number | null],
-      proposalStatusOptionId: [null as number | null],
-      observaciones: ['']
-    });
+    return this.formBuilder.group(
+      {
+        id: [null as string | null],
+        descripcionHallazgo: [''],
+        pnmcAxisId: [null as number | null],
+        pnmcComponentId: [null as number | null],
+        accionEstrategica: [''],
+        politicaPriorizada: [''],
+        armonizacionPnc: [''],
+        armonizacionPnd: [''],
+        armonizacionInternacional: [''],
+        priorityLevelOptionId: [null as number | null],
+        aliadosResponsables: [''],
+        fuentesFinanciacion: [''],
+        valorPropuestaCop: [null as number | null, [copAmountValidator()]],
+        approachOptionIds: [[] as number[]],
+        descripcion: [''],
+        scheduleOptionId: [null as number | null],
+        proposalStatusOptionId: [null as number | null],
+        observaciones: ['']
+      },
+      {
+        // El componente se filtra por el eje: no se puede guardar uno sin el otro.
+        validators: [
+          dependentPairValidator('pnmcAxisId', 'pnmcComponentId', {
+            parent: 'Selecciona el eje PNMC: de él depende la lista de componentes.',
+            child: 'Selecciona el componente de la lista, que se filtra según el eje PNMC elegido.'
+          })
+        ]
+      }
+    );
   }
 
   private createActorGroup() {
-    return this.formBuilder.group({
-      id: [null as string | null],
-      nombreAgente: ['', [requiredTextValidator(), Validators.maxLength(200)]],
-      agentTypeId: [null as number | null],
-      ecosystemRoleIds: [[] as number[]],
-      territorialLevelOptionIds: [[] as number[]],
-      // Celular: solo dígitos y exactamente 10 (misma regla en el backend).
-      numeroContacto: ['', [mobilePhoneValidator()]],
-      correoElectronico: ['', [emailFormatValidator(), Validators.maxLength(200)]],
-      observaciones: ['']
-    });
+    return this.formBuilder.group(
+      {
+        id: [null as string | null],
+        // El nombre es obligatorio solo si la fila trae algo: una fila en blanco no se guarda.
+        nombreAgente: ['', [Validators.maxLength(200)]],
+        agentTypeId: [null as number | null],
+        ecosystemRoleIds: [[] as number[]],
+        territorialLevelOptionIds: [[] as number[]],
+        // Celular: solo dígitos y exactamente 10 (misma regla en el backend).
+        numeroContacto: ['', [mobilePhoneValidator()]],
+        correoElectronico: ['', [emailFormatValidator(), Validators.maxLength(200)]],
+        observaciones: ['']
+      },
+      {
+        // El rol en el ecosistema se filtra por el tipo de agente: van siempre juntos.
+        validators: [
+          requiredWhenRowFilledValidator('nombreAgente', 'Escribe el nombre del agente.'),
+          dependentPairValidator('agentTypeId', 'ecosystemRoleIds', {
+            parent: 'Selecciona el tipo de agente: de él depende la lista de roles del ecosistema.',
+            child: 'Selecciona al menos un rol de la lista, que se filtra según el tipo de agente elegido.'
+          })
+        ]
+      }
+    );
   }
 
   private loadCatalogs(): void {

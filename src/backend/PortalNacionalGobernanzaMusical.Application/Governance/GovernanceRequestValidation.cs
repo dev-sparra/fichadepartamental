@@ -76,6 +76,26 @@ public static class GovernanceRequestValidation
                     "Escribe el nombre del agente."));
             }
 
+            // El Rol en el ecosistema depende del Tipo de agente: o se diligencian los dos, o
+            // ninguno. Guardar solo uno deja el actor sin clasificar en el ecosistema.
+            var hasAgentType = actor.AgentTypeId is > 0;
+            var hasRoles = actor.EcosystemRoleIds.Count > 0;
+
+            if (hasAgentType && !hasRoles)
+            {
+                errors.Add(new FieldValidationError(
+                    $"actors[{position - 1}].ecosystemRoleIds",
+                    $"Actor {position} · Rol en el ecosistema",
+                    "Selecciona al menos un rol de la lista, que se filtra según el tipo de agente elegido."));
+            }
+            else if (hasRoles && !hasAgentType)
+            {
+                errors.Add(new FieldValidationError(
+                    $"actors[{position - 1}].agentTypeId",
+                    $"Actor {position} · Tipo de agente (categoría)",
+                    "Selecciona el tipo de agente: de él depende la lista de roles del ecosistema."));
+            }
+
             if (!PortalFieldRules.IsMobilePhone(actor.NumeroContacto))
             {
                 errors.Add(new FieldValidationError(
@@ -115,6 +135,26 @@ public static class GovernanceRequestValidation
                     $"pnmcAxes[{position - 1}].valorPropuestaCop",
                     $"Eje PNMC {position} · Valor de la propuesta (COP)",
                     "Ingresa un valor en pesos mayor o igual a cero, sin puntos ni símbolos."));
+            }
+
+            // El Componente PNMC depende del Eje: o se diligencian los dos, o ninguno. Un eje sin
+            // componente deja el hallazgo sin ubicar dentro del Plan Nacional de Música.
+            var hasAxis = axis.PnmcAxisId is > 0;
+            var hasComponent = axis.PnmcComponentId is > 0;
+
+            if (hasAxis && !hasComponent)
+            {
+                errors.Add(new FieldValidationError(
+                    $"pnmcAxes[{position - 1}].pnmcComponentId",
+                    $"Eje PNMC {position} · Componente PNMC",
+                    "Selecciona el componente de la lista, que se filtra según el eje PNMC elegido."));
+            }
+            else if (hasComponent && !hasAxis)
+            {
+                errors.Add(new FieldValidationError(
+                    $"pnmcAxes[{position - 1}].pnmcAxisId",
+                    $"Eje PNMC {position} · Eje PNMC",
+                    "Selecciona el eje PNMC: de él depende la lista de componentes."));
             }
 
             AddLongTextError(errors, $"pnmcAxes[{position - 1}].observaciones", $"Eje PNMC {position} · Observaciones", axis.Observaciones);

@@ -44,7 +44,8 @@ etiqueta funcional con descripción y siguiente paso (`ImportStatusCatalog`).
 
 ## 3. Dónde queda almacenada la información
 
-1. **Registro del lote** — `import_batches`: archivo, tamaño, fecha, conteos y estado.
+1. **Registro del lote** — `import_batches`: archivo, tamaño, fecha, conteos, estado y el correo de
+   quien hizo la carga (`created_by_email`).
 2. **Incidencias** — `import_validation_issues`: severidad, hoja, fila, celda, código, valor
    recibido y contexto (valor esperado, cómo corregirlo y detalle técnico de soporte).
 3. **Filas de trabajo del lote** (staging) — `import_*_staging_rows`: copia fiel de lo leído en el
@@ -57,12 +58,22 @@ etiqueta funcional con descripción y siguiente paso (`ImportStatusCatalog`).
 
 ---
 
-## 4. Estado, visibilidad y edición de los datos importados
+## 4. Quién ve cada importación
+
+El historial de `/imports` es **personal**: el Gestor Departamental ve únicamente los archivos que
+él cargó, tanto en la lista de lotes como en el detalle de incidencias. El **Líder de Gobernanza**
+y el **Administrador** ven las cargas de todo el equipo, porque hacen seguimiento a los
+departamentos. Los lotes anteriores a este cambio no tienen autor registrado y solo los ven esos
+dos roles.
+
+---
+
+## 5. Estado, visibilidad y edición de los datos importados
 
 - **Visibilidad**: al terminar con estado *Importación exitosa* o *Importación completada con
   observaciones*, la ficha aparece de inmediato en `/governance`. Un lote *rechazado* no crea ni
   modifica ninguna ficha.
-- **Estado de revisión**: la ficha nace en **Pendiente**. El Líder de Gobernanza la **aprueba** o la
+- **Estado de revisión**: la ficha nace en **Borrador · sin revisar**. El Líder de Gobernanza la **aprueba** o la
   **devuelve** con observaciones; en ambos casos el Gestor Departamental recibe una notificación en
   el portal con el cambio de estado y el motivo.
 - **Edición**: el Gestor Departamental (y el Administrador) pueden editar todas las secciones desde
@@ -75,7 +86,7 @@ etiqueta funcional con descripción y siguiente paso (`ImportStatusCatalog`).
 
 ---
 
-## 5. Errores parciales
+## 6. Errores parciales
 
 - La importación es **parcial**: las filas correctas se guardan y solo quedan fuera las filas con
   errores de **severidad Error**, que se listan con el detalle exacto por fila y campo. El lote
@@ -94,7 +105,7 @@ etiqueta funcional con descripción y siguiente paso (`ImportStatusCatalog`).
 
 ---
 
-## 6. Redacción de las incidencias
+## 7. Redacción de las incidencias
 
 Cada incidencia se presenta con: **hoja**, **fila**, **columna**, **nombre del campo** (el mismo que
 aparece en la Ficha Departamental del portal), **valor recibido**, **valor esperado** y **cómo

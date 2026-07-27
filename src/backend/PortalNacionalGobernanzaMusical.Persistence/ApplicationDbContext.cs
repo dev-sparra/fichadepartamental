@@ -404,6 +404,8 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             entity.Property(x => x.Status).HasMaxLength(50).IsRequired();
             entity.Property(x => x.SourceType).HasMaxLength(50).IsRequired();
             entity.Property(x => x.SummaryJson).HasColumnType("longtext");
+            entity.Property(x => x.CreatedByEmail).HasMaxLength(256);
+            entity.HasIndex(x => x.CreatedByEmail);
         });
 
         modelBuilder.Entity<ImportValidationIssue>(entity =>

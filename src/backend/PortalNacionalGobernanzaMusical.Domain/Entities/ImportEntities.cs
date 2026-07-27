@@ -17,6 +17,9 @@ public sealed class ImportBatch : BaseEntity
     public int PersistedRecordCount { get; set; }
     public string? SummaryJson { get; set; }
 
+    /// <summary>Correo de quien cargó el archivo: cada usuario ve su propio historial de cargas.</summary>
+    public string? CreatedByEmail { get; set; }
+
     public ICollection<ImportValidationIssue> ValidationIssues { get; set; } = new List<ImportValidationIssue>();
 }
 

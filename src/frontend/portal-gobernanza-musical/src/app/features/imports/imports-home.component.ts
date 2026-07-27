@@ -250,8 +250,14 @@ function toneColor(tone: ImportTone | string): string {
       <!-- ── Historial de lotes ── -->
       <mat-card class="imp-card">
         <mat-card-header>
-          <mat-card-title>Historial de lotes</mat-card-title>
-          <mat-card-subtitle>Selecciona un lote para ver su detalle</mat-card-subtitle>
+          <mat-card-title>{{ canSeeAllBatches() ? 'Historial de lotes' : 'Mis importaciones' }}</mat-card-title>
+          <mat-card-subtitle>
+            @if (canSeeAllBatches()) {
+              Cargas de todo el equipo. Selecciona un lote para ver su detalle
+            } @else {
+              Solo tus cargas. Selecciona un lote para ver su detalle
+            }
+          </mat-card-subtitle>
         </mat-card-header>
         <mat-divider />
         @if (batches().length > 0) {
@@ -1287,6 +1293,14 @@ export class ImportsHomeComponent {
   /** El detalle técnico es para soporte: se muestra únicamente al Administrador. */
   readonly canSeeTechnicalDetail = computed(() =>
     this.authTokenService.hasAnyRole([AppRoles.Administrador])
+  );
+
+  /**
+   * Quién hace seguimiento a las cargas de todo el equipo. El resto de roles ve solo las suyas
+   * (el backend aplica el mismo criterio al devolver el historial).
+   */
+  readonly canSeeAllBatches = computed(() =>
+    this.authTokenService.hasAnyRole([AppRoles.Administrador, AppRoles.LiderGobernanza])
   );
 
   readonly errorCount = computed(() => this.issues().filter((issue) => issue.severity === 'Error').length);

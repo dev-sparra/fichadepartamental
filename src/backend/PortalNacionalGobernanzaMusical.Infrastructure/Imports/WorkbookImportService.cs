@@ -6,6 +6,7 @@ using PortalNacionalGobernanzaMusical.Application.Governance.Blueprint;
 using PortalNacionalGobernanzaMusical.Application.Imports;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
 using PortalNacionalGobernanzaMusical.Persistence;
+using PortalNacionalGobernanzaMusical.Shared.Constants;
 
 namespace PortalNacionalGobernanzaMusical.Infrastructure.Imports;
 
@@ -32,7 +33,9 @@ public sealed class WorkbookImportService(
             FileName = command.FileName,
             ContentType = command.ContentType,
             FileSizeBytes = command.FileSizeBytes,
-            Status = ImportBatchStatuses.Validating
+            Status = ImportBatchStatuses.Validating,
+            // Cada quien ve su propio historial de cargas en /imports.
+            CreatedByEmail = currentUserService.Email
         };
 
         dbContext.ImportBatches.Add(batch);
@@ -282,8 +285,7 @@ public sealed class WorkbookImportService(
 
     public async Task<IReadOnlyCollection<ImportBatchSummaryDto>> GetBatchesAsync(CancellationToken cancellationToken = default)
     {
-        var batches = await dbContext.ImportBatches
-            .AsNoTracking()
+        var batches = await FilterByCurrentUser(dbContext.ImportBatches.AsNoTracking())
             .OrderByDescending(x => x.StartedAtUtc)
             .Select(x => new
             {
@@ -321,6 +323,15 @@ public sealed class WorkbookImportService(
 
     public async Task<IReadOnlyCollection<ImportValidationIssueDto>> GetIssuesAsync(Guid importBatchId, CancellationToken cancellationToken = default)
     {
+        // Las incidencias solo se consultan si el lote es visible para quien pregunta.
+        var visible = await FilterByCurrentUser(dbContext.ImportBatches.AsNoTracking())
+            .AnyAsync(x => x.Id == importBatchId, cancellationToken);
+
+        if (!visible)
+        {
+            return [];
+        }
+
         var issues = await dbContext.ImportValidationIssues
             .AsNoTracking()
             .Where(x => x.ImportBatchId == importBatchId)
@@ -372,6 +383,26 @@ public sealed class WorkbookImportService(
 
         dbContext.ImportBatches.Remove(batch);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Restringe el historial de importaciones a las cargas del usuario actual. El Líder de
+    /// Gobernanza y el Administrador ven las de todo el equipo, porque hacen seguimiento a los
+    /// departamentos; los demás roles solo ven lo que ellos mismos cargaron.
+    /// </summary>
+    private IQueryable<ImportBatch> FilterByCurrentUser(IQueryable<ImportBatch> query)
+    {
+        if (currentUserService.HasAnyRole(SecurityRoleNames.Administrador, SecurityRoleNames.LiderGobernanza))
+        {
+            return query;
+        }
+
+        var email = currentUserService.Email;
+
+        // Sin correo en el token no se puede atribuir ninguna carga: mejor no mostrar nada ajeno.
+        return string.IsNullOrWhiteSpace(email)
+            ? query.Where(_ => false)
+            : query.Where(batch => batch.CreatedByEmail == email);
     }
 
     private async Task<int> PersistGovernanceDataAsync(

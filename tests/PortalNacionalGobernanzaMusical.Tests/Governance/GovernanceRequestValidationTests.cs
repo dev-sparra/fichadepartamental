@@ -93,14 +93,85 @@ public sealed class GovernanceRequestValidationTests
     [Fact]
     public void EnsureValid_NegativeCopAmount_ShouldBeRejected()
     {
-        var axis = new GovernancePnmcAxisDto(
-            null, null, null, null, null, null, null, null, null, null, null, null,
-            -1000m, [], null, null, null, null);
-
         var exception = Assert.Throws<DomainValidationException>(() =>
-            GovernanceRequestValidation.EnsureValid([axis]));
+            GovernanceRequestValidation.EnsureValid([Axis(valor: -1000m)]));
 
         var error = Assert.Single(exception.Errors);
         Assert.Contains("Valor de la propuesta (COP)", error.FieldLabel);
+    }
+
+    private static GovernancePnmcAxisDto Axis(
+        int? axisId = null,
+        int? componentId = null,
+        decimal? valor = null) =>
+        new(null, null, axisId, componentId, null, null, null, null, null, null, null, null,
+            valor, [], null, null, null, null);
+
+    // ── Campos que dependen unos de otros ────────────────────────────────────────────────────
+    // El Componente PNMC se filtra por el Eje y el Rol en el ecosistema por el Tipo de agente:
+    // guardar solo la mitad de la pareja deja el registro sin clasificar.
+
+    [Fact]
+    public void EnsureValid_AxisWithoutComponent_ShouldAskForTheComponent()
+    {
+        var exception = Assert.Throws<DomainValidationException>(() =>
+            GovernanceRequestValidation.EnsureValid([Axis(axisId: 3)]));
+
+        var error = Assert.Single(exception.Errors);
+        Assert.Contains("Componente PNMC", error.FieldLabel);
+    }
+
+    [Fact]
+    public void EnsureValid_ComponentWithoutAxis_ShouldAskForTheAxis()
+    {
+        var exception = Assert.Throws<DomainValidationException>(() =>
+            GovernanceRequestValidation.EnsureValid([Axis(componentId: 9)]));
+
+        var error = Assert.Single(exception.Errors);
+        Assert.Contains("Eje PNMC", error.FieldLabel);
+    }
+
+    [Fact]
+    public void EnsureValid_AxisAndComponentTogether_ShouldBeAllowed()
+    {
+        GovernanceRequestValidation.EnsureValid([Axis(axisId: 3, componentId: 9)]);
+    }
+
+    [Fact]
+    public void EnsureValid_RowWithNeitherAxisNorComponent_ShouldBeAllowed()
+    {
+        // Una fila sin eje ni componente sigue siendo válida: el archivo oficial no los exige.
+        GovernanceRequestValidation.EnsureValid([Axis()]);
+    }
+
+    [Fact]
+    public void EnsureValid_AgentTypeWithoutRoles_ShouldAskForTheRole()
+    {
+        var actor = new GovernanceActorDto(null, "Casa de la Cultura", 2, [], [], null, null, null);
+
+        var exception = Assert.Throws<DomainValidationException>(() =>
+            GovernanceRequestValidation.EnsureValid([actor]));
+
+        var error = Assert.Single(exception.Errors);
+        Assert.Contains("Rol en el ecosistema", error.FieldLabel);
+    }
+
+    [Fact]
+    public void EnsureValid_RolesWithoutAgentType_ShouldAskForTheAgentType()
+    {
+        var actor = new GovernanceActorDto(null, "Casa de la Cultura", null, [8], [], null, null, null);
+
+        var exception = Assert.Throws<DomainValidationException>(() =>
+            GovernanceRequestValidation.EnsureValid([actor]));
+
+        var error = Assert.Single(exception.Errors);
+        Assert.Contains("Tipo de agente", error.FieldLabel);
+    }
+
+    [Fact]
+    public void EnsureValid_AgentTypeWithRoles_ShouldBeAllowed()
+    {
+        GovernanceRequestValidation.EnsureValid(
+            [new GovernanceActorDto(null, "Casa de la Cultura", 2, [8, 9], [], null, null, null)]);
     }
 }
