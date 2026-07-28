@@ -1,5 +1,7 @@
 using System.Linq.Expressions;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Application.Catalogs;
 using PortalNacionalGobernanzaMusical.Domain.Common;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
@@ -7,7 +9,9 @@ using PortalNacionalGobernanzaMusical.Persistence;
 
 namespace PortalNacionalGobernanzaMusical.Infrastructure.Catalogs;
 
-public sealed class CatalogAdminService(ApplicationDbContext dbContext) : ICatalogAdminService
+public sealed class CatalogAdminService(
+    ApplicationDbContext dbContext,
+    IAuditService auditService) : ICatalogAdminService
 {
     private static readonly CatalogDefinitionDto[] Definitions =
     [
@@ -55,7 +59,31 @@ public sealed class CatalogAdminService(ApplicationDbContext dbContext) : ICatal
         };
     }
 
-    public Task<CatalogItemDto> CreateAsync(string catalogKey, UpsertCatalogItemRequest request, CancellationToken cancellationToken = default)
+    public async Task<CatalogItemDto> CreateAsync(string catalogKey, UpsertCatalogItemRequest request, CancellationToken cancellationToken = default)
+    {
+        var created = await CreateCoreAsync(catalogKey, request, cancellationToken);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Catalogos,
+            EntityName = catalogKey,
+            EntityKey = created.Id.ToString(),
+            EntityLabel = DescribeItem(catalogKey, created.Name),
+            Operation = "Crear valor de catálogo",
+            Description = $"Agregó \"{created.Name}\" al catálogo {CatalogDisplayName(catalogKey)}.",
+            Changes = new AuditChangeSet()
+                .Track("name", "Nombre", null, created.Name)
+                .Track("displayOrder", "Orden", null, created.DisplayOrder)
+                .Track("isActive", "Activo", null, created.IsActive)
+                .Track("parentId", "Depende de", null, created.ParentId)
+                .Changes,
+            NewValuesJson = JsonSerializer.Serialize(created)
+        }, cancellationToken);
+
+        return created;
+    }
+
+    private Task<CatalogItemDto> CreateCoreAsync(string catalogKey, UpsertCatalogItemRequest request, CancellationToken cancellationToken)
     {
         return catalogKey switch
         {
@@ -79,7 +107,36 @@ public sealed class CatalogAdminService(ApplicationDbContext dbContext) : ICatal
         };
     }
 
-    public Task<CatalogItemDto> UpdateAsync(string catalogKey, int id, UpsertCatalogItemRequest request, CancellationToken cancellationToken = default)
+    public async Task<CatalogItemDto> UpdateAsync(string catalogKey, int id, UpsertCatalogItemRequest request, CancellationToken cancellationToken = default)
+    {
+        var before = await FindItemAsync(catalogKey, id, cancellationToken);
+        var after = await UpdateCoreAsync(catalogKey, id, request, cancellationToken);
+
+        var changes = new AuditChangeSet()
+            .Track("name", "Nombre", before?.Name, after.Name)
+            .Track("displayOrder", "Orden", before?.DisplayOrder, after.DisplayOrder)
+            .Track("isActive", "Activo", before?.IsActive, after.IsActive)
+            .Track("parentId", "Depende de", before?.ParentId, after.ParentId);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Catalogos,
+            EntityName = catalogKey,
+            EntityKey = id.ToString(),
+            EntityLabel = DescribeItem(catalogKey, after.Name),
+            Operation = "Actualizar valor de catálogo",
+            Description = changes.HasChanges
+                ? $"Modificó {changes.DescribeChangedFields()} de \"{after.Name}\" en el catálogo {CatalogDisplayName(catalogKey)}."
+                : $"Guardó \"{after.Name}\" del catálogo {CatalogDisplayName(catalogKey)} sin cambios.",
+            Changes = changes.Changes,
+            OldValuesJson = before is null ? null : JsonSerializer.Serialize(before),
+            NewValuesJson = JsonSerializer.Serialize(after)
+        }, cancellationToken);
+
+        return after;
+    }
+
+    private Task<CatalogItemDto> UpdateCoreAsync(string catalogKey, int id, UpsertCatalogItemRequest request, CancellationToken cancellationToken)
     {
         return catalogKey switch
         {
@@ -103,7 +160,29 @@ public sealed class CatalogAdminService(ApplicationDbContext dbContext) : ICatal
         };
     }
 
-    public Task DeleteAsync(string catalogKey, int id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(string catalogKey, int id, CancellationToken cancellationToken = default)
+    {
+        var before = await FindItemAsync(catalogKey, id, cancellationToken);
+        await DeleteCoreAsync(catalogKey, id, cancellationToken);
+
+        var name = before?.Name ?? id.ToString();
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Catalogos,
+            EntityName = catalogKey,
+            EntityKey = id.ToString(),
+            EntityLabel = DescribeItem(catalogKey, name),
+            Operation = "Desactivar valor de catálogo",
+            // El borrado del portal es lógico: el valor deja de ofrecerse pero no se pierde el
+            // histórico de las fichas que ya lo usaban.
+            Description = $"Desactivó \"{name}\" en el catálogo {CatalogDisplayName(catalogKey)}. Deja de aparecer en los formularios, pero las fichas que ya lo usaban lo conservan.",
+            Changes = new AuditChangeSet().Track("isActive", "Activo", true, false).Changes,
+            OldValuesJson = before is null ? null : JsonSerializer.Serialize(before)
+        }, cancellationToken);
+    }
+
+    private Task DeleteCoreAsync(string catalogKey, int id, CancellationToken cancellationToken)
     {
         return catalogKey switch
         {
@@ -125,6 +204,23 @@ public sealed class CatalogAdminService(ApplicationDbContext dbContext) : ICatal
             "months" => DeactivateAsync(dbContext.MonthOptions, id, cancellationToken),
             _ => throw new KeyNotFoundException($"El catálogo '{catalogKey}' no existe.")
         };
+    }
+
+    /// <summary>Nombre del catálogo tal como se ve en la pantalla de administración.</summary>
+    private static string CatalogDisplayName(string catalogKey) =>
+        Definitions.FirstOrDefault(x => x.Key == catalogKey)?.DisplayName ?? catalogKey;
+
+    private static string DescribeItem(string catalogKey, string name) =>
+        $"{CatalogDisplayName(catalogKey)} · {name}";
+
+    /// <summary>
+    /// Estado del valor antes de modificarlo, para poder registrar qué cambió. Se apoya en la
+    /// consulta del catálogo completo porque son listas cortas que la propia pantalla ya carga.
+    /// </summary>
+    private async Task<CatalogItemDto?> FindItemAsync(string catalogKey, int id, CancellationToken cancellationToken)
+    {
+        var items = await GetItemsAsync(catalogKey, null, cancellationToken);
+        return items.FirstOrDefault(item => item.Id == id);
     }
 
     private static IQueryable<TEntity> FilterByParent<TEntity>(IQueryable<TEntity> query, int? parentId, Expression<Func<TEntity, int>> parentSelector)

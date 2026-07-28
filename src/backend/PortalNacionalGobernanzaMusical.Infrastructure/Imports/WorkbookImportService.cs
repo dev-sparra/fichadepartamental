@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
+using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Application.Common;
 using PortalNacionalGobernanzaMusical.Application.Governance.Blueprint;
 using PortalNacionalGobernanzaMusical.Application.Imports;
@@ -16,7 +17,8 @@ public sealed class WorkbookImportService(
     IFichaBlueprintProvider blueprintProvider,
     WorkbookStructureValidator structureValidator,
     IImportIssueNarrator issueNarrator,
-    ICurrentUserService currentUserService) : IWorkbookImportService
+    ICurrentUserService currentUserService,
+    IAuditService auditService) : IWorkbookImportService
 {
     // Reglas de contacto del Actor tomadas del Blueprint (Actores!F número, Actores!G correo).
     private readonly BlueprintValidation? _phoneRule = ResolveActorRule(blueprintProvider, "numeroContacto");
@@ -45,14 +47,49 @@ public sealed class WorkbookImportService(
 
         using (workbook)
         {
-            if (rejections.Count > 0)
-            {
-                return await RejectBatchAsync(batch, rejections, cancellationToken);
-            }
+            var result = rejections.Count > 0
+                ? await RejectBatchAsync(batch, rejections, cancellationToken)
+                : await ProcessAcceptedWorkbookAsync(batch, workbook!, cancellationToken);
 
-            batch.Status = ImportBatchStatuses.Processing;
-            return await ProcessWorkbookAsync(batch, workbook!, cancellationToken);
+            await LogImportAsync(batch, result, cancellationToken);
+            return result;
         }
+    }
+
+    private Task<ImportWorkbookResult> ProcessAcceptedWorkbookAsync(ImportBatch batch, XLWorkbook workbook, CancellationToken cancellationToken)
+    {
+        batch.Status = ImportBatchStatuses.Processing;
+        return ProcessWorkbookAsync(batch, workbook, cancellationToken);
+    }
+
+    /// <summary>
+    /// Deja constancia de la carga en el historial de auditoría, tanto si se importó como si se
+    /// rechazó: es la acción con la que entra al portal la información de toda una ficha.
+    /// </summary>
+    private async Task LogImportAsync(ImportBatch batch, ImportWorkbookResult result, CancellationToken cancellationToken)
+    {
+        var description = result.Accepted
+            ? $"Cargó el archivo \"{batch.FileName}\". Resultado: {result.StatusLabel.ToLowerInvariant()}, con {result.ValidRowCount} filas válidas, {result.InvalidRowCount} con errores y {result.PersistedRecordCount} registros guardados en la ficha."
+            : $"Cargó el archivo \"{batch.FileName}\" y fue rechazado: {result.StatusDescription}";
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Importaciones,
+            EntityName = nameof(ImportBatch),
+            EntityId = batch.Id,
+            EntityLabel = batch.FileName,
+            Operation = "Cargar archivo",
+            Description = description,
+            Result = result.Accepted ? AuditResults.Exitoso : AuditResults.Fallido,
+            Changes = new AuditChangeSet()
+                .Track("fileName", "Archivo", null, batch.FileName)
+                .Track("status", "Estado de la carga", null, result.StatusLabel)
+                .Track("validRowCount", "Filas válidas", null, result.ValidRowCount)
+                .Track("invalidRowCount", "Filas con errores", null, result.InvalidRowCount)
+                .Track("warningCount", "Observaciones", null, result.WarningCount)
+                .Track("persistedRecordCount", "Registros guardados", null, result.PersistedRecordCount)
+                .Changes
+        }, cancellationToken);
     }
 
     /// <summary>
@@ -374,6 +411,21 @@ public sealed class WorkbookImportService(
 
         dbContext.ImportBatches.Remove(batch);
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Importaciones,
+            EntityName = nameof(ImportBatch),
+            EntityId = batch.Id,
+            EntityLabel = batch.FileName,
+            Operation = "Eliminar carga",
+            Description = $"Eliminó del historial la carga del archivo \"{batch.FileName}\" del {batch.StartedAtUtc:dd/MM/yyyy HH:mm} y sus incidencias. Los datos ya guardados en la ficha no se revierten.",
+            Changes = new AuditChangeSet()
+                .Track("fileName", "Archivo", batch.FileName, null)
+                .Track("startedAtUtc", "Fecha de la carga", batch.StartedAtUtc, null)
+                .Track("persistedRecordCount", "Registros guardados", batch.PersistedRecordCount, null)
+                .Changes
+        }, cancellationToken);
     }
 
     /// <summary>

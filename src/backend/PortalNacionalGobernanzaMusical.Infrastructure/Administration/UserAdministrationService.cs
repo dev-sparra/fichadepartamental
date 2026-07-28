@@ -3,13 +3,18 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using PortalNacionalGobernanzaMusical.Application.Administration;
+using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
 using PortalNacionalGobernanzaMusical.Persistence;
 
 namespace PortalNacionalGobernanzaMusical.Infrastructure.Administration;
 
-public sealed class UserAdministrationService(ApplicationDbContext dbContext) : IUserAdministrationService
+public sealed class UserAdministrationService(
+    ApplicationDbContext dbContext,
+    IAuditService auditService) : IUserAdministrationService
 {
+    private const string EntityName = nameof(UserAccount);
+
     private readonly PasswordHasher<UserAccount> hasher = new();
 
     public async Task<IReadOnlyCollection<UserDto>> GetUsersAsync(CancellationToken cancellationToken = default)
@@ -51,11 +56,37 @@ public sealed class UserAdministrationService(ApplicationDbContext dbContext) : 
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await SyncRoles(user.Id, request.RoleNames, cancellationToken);
-        return MapUser(user);
+
+        var created = MapUser(user);
+        var roles = string.Join(", ", request.RoleNames);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Seguridad,
+            EntityName = EntityName,
+            EntityId = user.Id,
+            EntityLabel = DescribeUser(user.DisplayName, user.Email),
+            Operation = "Crear usuario",
+            Description = $"Creó el usuario \"{user.Email}\" con el rol {roles}. Deberá cambiar la contraseña en su primer ingreso.",
+            Changes = new AuditChangeSet()
+                .Track("email", "Correo", null, user.Email)
+                .Track("displayName", "Nombre", null, user.DisplayName)
+                .Track("roles", "Roles", null, request.RoleNames)
+                .Track("isActive", "Activo", null, user.IsActive)
+                .Changes,
+            NewValuesJson = JsonSerializer.Serialize(created)
+        }, cancellationToken);
+
+        return created;
     }
 
     public async Task<UserDto> UpdateUserAsync(Guid id, UpdateUserRequest request, CancellationToken cancellationToken = default)
     {
+        var before = await dbContext.UserAccounts.AsNoTracking()
+            .Include(x => x.RoleAssignments).ThenInclude(x => x.Role)
+            .SingleAsync(x => x.Id == id, cancellationToken);
+        var beforeDto = MapUser(before);
+
         var user = await dbContext.UserAccounts
             .Include(x => x.RoleAssignments)
             .SingleAsync(x => x.Id == id, cancellationToken);
@@ -71,8 +102,30 @@ public sealed class UserAdministrationService(ApplicationDbContext dbContext) : 
         user = await dbContext.UserAccounts.AsNoTracking()
             .Include(x => x.RoleAssignments).ThenInclude(x => x.Role)
             .SingleAsync(x => x.Id == id, cancellationToken);
+        var afterDto = MapUser(user);
 
-        return MapUser(user);
+        var changes = new AuditChangeSet()
+            .Track("email", "Correo", beforeDto.Email, afterDto.Email)
+            .Track("displayName", "Nombre", beforeDto.DisplayName, afterDto.DisplayName)
+            .Track("isActive", "Activo", beforeDto.IsActive, afterDto.IsActive)
+            .Track("roles", "Roles", beforeDto.Roles, afterDto.Roles);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Seguridad,
+            EntityName = EntityName,
+            EntityId = user.Id,
+            EntityLabel = DescribeUser(user.DisplayName, user.Email),
+            Operation = "Actualizar usuario",
+            Description = changes.HasChanges
+                ? $"Modificó {changes.DescribeChangedFields()} del usuario \"{user.Email}\"."
+                : $"Guardó el usuario \"{user.Email}\" sin cambios.",
+            Changes = changes.Changes,
+            OldValuesJson = JsonSerializer.Serialize(beforeDto),
+            NewValuesJson = JsonSerializer.Serialize(afterDto)
+        }, cancellationToken);
+
+        return afterDto;
     }
 
     public async Task<ResetPasswordResult?> ResetUserPasswordAsync(Guid id, CancellationToken cancellationToken = default)
@@ -92,6 +145,21 @@ public sealed class UserAdministrationService(ApplicationDbContext dbContext) : 
         user.UpdatedAtUtc = DateTime.UtcNow;
 
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Seguridad,
+            EntityName = EntityName,
+            EntityId = user.Id,
+            EntityLabel = DescribeUser(user.DisplayName, user.Email),
+            Operation = "Restablecer contraseña",
+            Description = $"Restableció la contraseña del usuario \"{user.Email}\" y generó una temporal. El usuario deberá cambiarla en su próximo ingreso.",
+            // La contraseña temporal no se guarda en el historial: se entrega en pantalla una sola vez.
+            Changes = new AuditChangeSet()
+                .TrackSecret("password", "Contraseña")
+                .Track("mustChangePassword", "Debe cambiar la contraseña", false, true)
+                .Changes
+        }, cancellationToken);
 
         return new ResetPasswordResult(user.Id, user.Email, temporaryPassword);
     }
@@ -130,6 +198,9 @@ public sealed class UserAdministrationService(ApplicationDbContext dbContext) : 
 
         await dbContext.SaveChangesAsync(cancellationToken);
     }
+
+    private static string DescribeUser(string? displayName, string email) =>
+        string.IsNullOrWhiteSpace(displayName) ? email : $"{displayName} ({email})";
 
     private static UserDto MapUser(UserAccount x) => new(
         x.Id, x.Email, x.DisplayName, x.IsActive,

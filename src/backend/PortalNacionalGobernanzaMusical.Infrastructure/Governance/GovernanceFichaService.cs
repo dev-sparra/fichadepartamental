@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Application.Common;
 using PortalNacionalGobernanzaMusical.Application.Governance;
+using PortalNacionalGobernanzaMusical.Domain.Common;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
 using PortalNacionalGobernanzaMusical.Persistence;
 using PortalNacionalGobernanzaMusical.Shared.Constants;
@@ -131,7 +132,21 @@ public sealed class GovernanceFichaService(
             ficha.ResponsableRegistro, ficha.RegionOcadOptionId, ficha.Observaciones,
             request.InformationSourceIds.Distinct().ToArray());
 
-        await auditService.LogAsync(EntityName, ficha.Id, "Crear", null, JsonSerializer.Serialize(created), cancellationToken);
+        var label = await DescribeFichaAsync(ficha.Id, cancellationToken);
+        var changes = await BuildIdentificationChangesAsync(null, created, cancellationToken);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Gobernanza,
+            EntityName = EntityName,
+            EntityId = ficha.Id,
+            EntityLabel = label,
+            Operation = "Crear ficha",
+            Description = $"Creó la {label}. Queda en borrador, a la espera de revisión del Líder de Gobernanza.",
+            Changes = changes.Changes,
+            NewValuesJson = JsonSerializer.Serialize(created)
+        }, cancellationToken);
+
         return created;
     }
 
@@ -182,7 +197,24 @@ public sealed class GovernanceFichaService(
             ficha.Observaciones,
             request.InformationSourceIds.Distinct().ToArray());
 
-        await auditService.LogAsync(EntityName, ficha.Id, "Actualizar identificación", JsonSerializer.Serialize(before), JsonSerializer.Serialize(after), cancellationToken);
+        var label = await DescribeFichaAsync(ficha.Id, cancellationToken);
+        var changes = await BuildIdentificationChangesAsync(before, after, cancellationToken);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Gobernanza,
+            EntityName = EntityName,
+            EntityId = ficha.Id,
+            EntityLabel = label,
+            Operation = "Actualizar identificación",
+            Description = changes.HasChanges
+                ? $"Modificó {changes.DescribeChangedFields()} en la identificación de la {label}."
+                : $"Guardó la identificación de la {label} sin cambios.",
+            Changes = changes.Changes,
+            OldValuesJson = JsonSerializer.Serialize(before),
+            NewValuesJson = JsonSerializer.Serialize(after)
+        }, cancellationToken);
+
         return after;
     }
 
@@ -211,6 +243,12 @@ public sealed class GovernanceFichaService(
         }
 
         var fichaSummary = new { ficha.Id, ficha.DepartmentId, ficha.FechaLevantamiento };
+        var label = await DescribeFichaAsync(id, cancellationToken);
+        var borrado = new AuditChangeSet()
+            .Track("oportunidades", "Oportunidades de cambio", ficha.OportunidadesCambio.Count, 0)
+            .Track("ejes", "Ejes PNMC", ficha.EjesPnmc.Count, 0)
+            .Track("actores", "Actores", ficha.Actores.Count, 0)
+            .Track("diagnostico", "Diagnóstico del ecosistema", ficha.DiagnosticoEcosistema is not null, false);
 
         dbContext.EjesPnmcEnfoques.RemoveRange(ficha.EjesPnmc.SelectMany(e => e.Enfoques));
         dbContext.EjesPnmc.RemoveRange(ficha.EjesPnmc);
@@ -234,7 +272,17 @@ public sealed class GovernanceFichaService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        await auditService.LogAsync(EntityName, id, "Eliminar", JsonSerializer.Serialize(fichaSummary), null, cancellationToken);
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Gobernanza,
+            EntityName = EntityName,
+            EntityId = id,
+            EntityLabel = label,
+            Operation = "Eliminar ficha",
+            Description = $"Eliminó la {label} y todo su contenido, incluido su historial de aprobación.",
+            Changes = borrado.Changes,
+            OldValuesJson = JsonSerializer.Serialize(fichaSummary)
+        }, cancellationToken);
     }
 
     public async Task<GovernanceDiagnosticDto?> GetDiagnosticAsync(Guid fichaId, CancellationToken cancellationToken = default)
@@ -249,7 +297,8 @@ public sealed class GovernanceFichaService(
     {
         await GetFichaWithAccessCheckAsync(fichaId, cancellationToken);
         var existing = await dbContext.DiagnosticosEcosistema.SingleOrDefaultAsync(x => x.FichaDepartamentalId == fichaId, cancellationToken);
-        var beforeJson = existing is null ? null : JsonSerializer.Serialize(MapDiagnostic(existing));
+        var before = existing is null ? null : MapDiagnostic(existing);
+        var beforeJson = before is null ? null : JsonSerializer.Serialize(before);
         var entity = existing ?? new DiagnosticoEcosistema { FichaDepartamentalId = fichaId };
 
         entity.CaracterizacionGeneral = request.CaracterizacionGeneral;
@@ -277,7 +326,48 @@ public sealed class GovernanceFichaService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         var diagnostic = MapDiagnostic(entity);
-        await auditService.LogAsync(EntityName, fichaId, "Actualizar diagnóstico", beforeJson, JsonSerializer.Serialize(diagnostic), cancellationToken);
+        var label = await DescribeFichaAsync(fichaId, cancellationToken);
+
+        var committeeStatuses = await CatalogNamesAsync(dbContext.CommitteeStatusOptions, [before?.CommitteeStatusOptionId, diagnostic.CommitteeStatusOptionId], cancellationToken);
+        var planStatuses = await CatalogNamesAsync(
+            dbContext.PlanStatusOptions,
+            [before?.PlanDepartamentalCulturaStatusId, diagnostic.PlanDepartamentalCulturaStatusId,
+             before?.PlanDepartamentalMusicaStatusId, diagnostic.PlanDepartamentalMusicaStatusId],
+            cancellationToken);
+
+        static string? Name(Dictionary<int, string> names, int? id) =>
+            id.HasValue ? names.GetValueOrDefault(id.Value, id.Value.ToString()) : null;
+
+        var changes = new AuditChangeSet()
+            .Track("caracterizacionGeneral", "Caracterización general", before?.CaracterizacionGeneral, diagnostic.CaracterizacionGeneral)
+            .Track("fortalezasIdentificadas", "Fortalezas identificadas", before?.FortalezasIdentificadas, diagnostic.FortalezasIdentificadas)
+            .Track("politicasPriorizadas", "Políticas priorizadas", before?.PoliticasPriorizadas, diagnostic.PoliticasPriorizadas)
+            .Track("debilidadesIdentificadas", "Debilidades identificadas", before?.DebilidadesIdentificadas, diagnostic.DebilidadesIdentificadas)
+            .Track("tensionesOConflictos", "Tensiones o conflictos", before?.TensionesOConflictos, diagnostic.TensionesOConflictos)
+            .Track("committeeStatusOptionId", "Estado del comité", Name(committeeStatuses, before?.CommitteeStatusOptionId), Name(committeeStatuses, diagnostic.CommitteeStatusOptionId))
+            .Track("planDepartamentalCulturaStatusId", "Plan departamental de cultura", Name(planStatuses, before?.PlanDepartamentalCulturaStatusId), Name(planStatuses, diagnostic.PlanDepartamentalCulturaStatusId))
+            .Track("consejoDepartamentalCultura", "Consejo departamental de cultura", before?.ConsejoDepartamentalCultura, diagnostic.ConsejoDepartamentalCultura)
+            .Track("planDepartamentalMusicaStatusId", "Plan departamental de música", Name(planStatuses, before?.PlanDepartamentalMusicaStatusId), Name(planStatuses, diagnostic.PlanDepartamentalMusicaStatusId))
+            .Track("ordenanzasCulturales", "Ordenanzas culturales", before?.OrdenanzasCulturales, diagnostic.OrdenanzasCulturales)
+            .Track("consejoDepartamentalMusica", "Consejo departamental de música", before?.ConsejoDepartamentalMusica, diagnostic.ConsejoDepartamentalMusica)
+            .Track("mesaSectorialTerritorial", "Mesa sectorial territorial", before?.MesaSectorialTerritorial, diagnostic.MesaSectorialTerritorial)
+            .Track("observaciones", "Observaciones", before?.Observaciones, diagnostic.Observaciones);
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Gobernanza,
+            EntityName = EntityName,
+            EntityId = fichaId,
+            EntityLabel = label,
+            Operation = "Actualizar diagnóstico del ecosistema",
+            Description = changes.HasChanges
+                ? $"Modificó {changes.DescribeChangedFields()} en el diagnóstico del ecosistema de la {label}."
+                : $"Guardó el diagnóstico del ecosistema de la {label} sin cambios.",
+            Changes = changes.Changes,
+            OldValuesJson = beforeJson,
+            NewValuesJson = JsonSerializer.Serialize(diagnostic)
+        }, cancellationToken);
+
         return diagnostic;
     }
 
@@ -312,7 +402,7 @@ public sealed class GovernanceFichaService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         var opportunities = await GetOpportunitiesAsync(fichaId, cancellationToken);
-        await auditService.LogAsync(EntityName, fichaId, "Actualizar oportunidades", JsonSerializer.Serialize(before), JsonSerializer.Serialize(opportunities), cancellationToken);
+        await LogSectionAsync(fichaId, "Actualizar oportunidades de cambio", "las oportunidades de cambio", before, opportunities, cancellationToken);
         return opportunities;
     }
 
@@ -374,7 +464,7 @@ public sealed class GovernanceFichaService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         var axes = await GetPnmcAxesAsync(fichaId, cancellationToken);
-        await auditService.LogAsync(EntityName, fichaId, "Actualizar ejes PNMC", JsonSerializer.Serialize(before), JsonSerializer.Serialize(axes), cancellationToken);
+        await LogSectionAsync(fichaId, "Actualizar ejes PNMC", "los ejes PNMC", before, axes, cancellationToken);
         return axes;
     }
 
@@ -436,7 +526,7 @@ public sealed class GovernanceFichaService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
         var actors = await GetActorsAsync(fichaId, cancellationToken);
-        await auditService.LogAsync(EntityName, fichaId, "Actualizar actores", JsonSerializer.Serialize(before), JsonSerializer.Serialize(actors), cancellationToken);
+        await LogSectionAsync(fichaId, "Actualizar actores", "los actores del ecosistema", before, actors, cancellationToken);
         return actors;
     }
 
@@ -626,5 +716,114 @@ public sealed class GovernanceFichaService(
         }
 
         return ficha;
+    }
+
+    // ── Auditoría ────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Nombre de la ficha en palabras, para leer el historial sin tener que abrirla.</summary>
+    private async Task<string> DescribeFichaAsync(Guid fichaId, CancellationToken cancellationToken)
+    {
+        // El departamento se busca aparte del resto de la ficha: si el catálogo no lo tuviera, el
+        // registro de auditoría igual debe decir de qué fecha era la ficha.
+        var ficha = await dbContext.FichasDepartamentales.AsNoTracking()
+            .Where(x => x.Id == fichaId)
+            .Select(x => new { x.DepartmentId, x.FechaLevantamiento })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (ficha is null)
+        {
+            return $"ficha {fichaId}";
+        }
+
+        var departmentName = await dbContext.Departments.AsNoTracking()
+            .Where(x => x.Id == ficha.DepartmentId)
+            .Select(x => x.Name)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return string.IsNullOrWhiteSpace(departmentName)
+            ? $"ficha del {ficha.FechaLevantamiento:dd/MM/yyyy}"
+            : $"ficha de {departmentName} · {ficha.FechaLevantamiento:dd/MM/yyyy}";
+    }
+
+    /// <summary>
+    /// Registra el guardado de una sección de lista (oportunidades, ejes o actores). Lo que
+    /// interesa en el historial es cuántos registros quedaron; el contenido exacto de antes y
+    /// después queda en los valores JSON del detalle.
+    /// </summary>
+    private async Task LogSectionAsync<TItem>(
+        Guid fichaId,
+        string operation,
+        string sectionLabel,
+        IReadOnlyCollection<TItem> before,
+        IReadOnlyCollection<TItem> after,
+        CancellationToken cancellationToken)
+    {
+        var label = await DescribeFichaAsync(fichaId, cancellationToken);
+        var description = before.Count == after.Count
+            ? $"Guardó {sectionLabel} de la {label}: quedaron {after.Count} registros."
+            : $"Guardó {sectionLabel} de la {label}: pasó de {before.Count} a {after.Count} registros.";
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Gobernanza,
+            EntityName = EntityName,
+            EntityId = fichaId,
+            EntityLabel = label,
+            Operation = operation,
+            Description = description,
+            Changes = new AuditChangeSet()
+                .Track("count", $"Registros en {sectionLabel}", before.Count, after.Count)
+                .Changes,
+            OldValuesJson = JsonSerializer.Serialize(before),
+            NewValuesJson = JsonSerializer.Serialize(after)
+        }, cancellationToken);
+    }
+
+    /// <summary>Nombres de los valores de catálogo indicados, para mostrarlos en vez del id.</summary>
+    private static async Task<Dictionary<int, string>> CatalogNamesAsync<TEntity>(
+        IQueryable<TEntity> catalog,
+        IEnumerable<int?> ids,
+        CancellationToken cancellationToken)
+        where TEntity : CatalogEntityBase
+    {
+        var wanted = ids.Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToArray();
+        if (wanted.Length == 0)
+        {
+            return [];
+        }
+
+        return await catalog.AsNoTracking()
+            .Where(x => wanted.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => x.Name, cancellationToken);
+    }
+
+    /// <summary>Campos de la identificación con los catálogos resueltos a su nombre.</summary>
+    private async Task<AuditChangeSet> BuildIdentificationChangesAsync(
+        GovernanceFichaDetailDto? before,
+        GovernanceFichaDetailDto after,
+        CancellationToken cancellationToken)
+    {
+        var departments = await CatalogNamesAsync(dbContext.Departments, [before?.DepartmentId, after.DepartmentId], cancellationToken);
+        var municipalities = await CatalogNamesAsync(dbContext.Municipalities, [before?.MunicipalityId, after.MunicipalityId], cancellationToken);
+        var regions = await CatalogNamesAsync(dbContext.RegionOcadOptions, [before?.RegionOcadOptionId, after.RegionOcadOptionId], cancellationToken);
+        var sources = await CatalogNamesAsync(
+            dbContext.InformationSourceOptions,
+            (before?.InformationSourceIds ?? []).Concat(after.InformationSourceIds).Select(id => (int?)id),
+            cancellationToken);
+
+        static string? Name(Dictionary<int, string> names, int? id) =>
+            id.HasValue ? names.GetValueOrDefault(id.Value, id.Value.ToString()) : null;
+
+        static string[] Names(Dictionary<int, string> names, IEnumerable<int>? ids) =>
+            (ids ?? []).Select(id => names.GetValueOrDefault(id, id.ToString())).ToArray();
+
+        return new AuditChangeSet()
+            .Track("fechaLevantamiento", "Fecha de levantamiento", before?.FechaLevantamiento, after.FechaLevantamiento)
+            .Track("departmentId", "Departamento", Name(departments, before?.DepartmentId), Name(departments, after.DepartmentId))
+            .Track("municipalityId", "Municipio", Name(municipalities, before?.MunicipalityId), Name(municipalities, after.MunicipalityId))
+            .Track("responsableRegistro", "Responsable del registro", before?.ResponsableRegistro, after.ResponsableRegistro)
+            .Track("regionOcadOptionId", "Región OCAD", Name(regions, before?.RegionOcadOptionId), Name(regions, after.RegionOcadOptionId))
+            .Track("informationSourceIds", "Fuentes de información", Names(sources, before?.InformationSourceIds), Names(sources, after.InformationSourceIds))
+            .Track("observaciones", "Observaciones", before?.Observaciones, after.Observaciones);
     }
 }

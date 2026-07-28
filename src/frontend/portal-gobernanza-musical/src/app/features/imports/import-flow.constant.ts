@@ -57,7 +57,8 @@ export const IMPORT_FLOW_STAGES: ImportStage[] = [
   {
     key: 'processing',
     label: 'Procesamiento',
-    detail: 'La información válida se guarda en la ficha departamental, los actores, los ejes y los indicadores.',
+    detail:
+      'La información válida se guarda en la ficha departamental: identificación, diagnóstico, oportunidades, ejes y actores.',
     icon: 'sync'
   },
   {

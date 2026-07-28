@@ -275,7 +275,8 @@ a {
   box-shadow: var(--shadow-2xl) !important;
 }
 
-.confirm-dialog-panel .mat-mdc-dialog-surface {
+.confirm-dialog-panel .mat-mdc-dialog-surface,
+.import-progress-dialog-panel .mat-mdc-dialog-surface {
   padding: var(--space-6) !important;
 }
 

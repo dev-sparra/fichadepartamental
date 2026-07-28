@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Application.Common;
 using PortalNacionalGobernanzaMusical.Application.Governance;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
@@ -21,6 +22,8 @@ public sealed class GovernanceAuditTests
     {
         public string? Email => UserEmail;
         public string? IpAddress => UserIp;
+        public string? RequestMethod => "PUT";
+        public string? RequestPath => "/api/governance/fichas";
         public IReadOnlyCollection<string> Roles => ["Administrador"];
         public bool HasAnyRole(params string[] roles) => roles.Any(r => Roles.Contains(r, StringComparer.OrdinalIgnoreCase));
     }
@@ -53,12 +56,36 @@ public sealed class GovernanceAuditTests
 
         var ficha = await service.CreateFichaAsync(FichaRequest());
 
-        var log = await context.Set<AuditLog>().SingleAsync(x => x.Operation == "Crear");
+        var log = await context.Set<AuditLog>().SingleAsync(x => x.Operation == "Crear ficha");
         Assert.Equal("FichaDepartamental", log.EntityName);
         Assert.Equal(ficha.Id, log.EntityId);
         Assert.Equal(UserEmail, log.UserEmail);
         Assert.Equal(UserIp, log.IpAddress);
+        Assert.Equal(AuditModules.Gobernanza, log.Module);
+        Assert.Equal("Administrador", log.UserRoles);
+        Assert.Equal("PUT", log.RequestMethod);
         Assert.NotNull(log.NewValuesJson);
+        // El historial se lee sin abrir el detalle: dice de qué ficha se trata y qué pasó con ella.
+        Assert.Contains("15/03/2026", log.EntityLabel);
+        Assert.Contains("Creó la ficha", log.Description);
+    }
+
+    [Fact]
+    public async Task UpdateFicha_ShouldRecordWhichFieldsChanged()
+    {
+        using var context = NewContext();
+        var service = NewService(context);
+        var ficha = await service.CreateFichaAsync(FichaRequest());
+
+        await service.UpdateFichaAsync(
+            ficha.Id,
+            new UpdateGovernanceFichaRequest(new DateOnly(2026, 3, 15), 1, null, "Otro responsable", null, "obs", []));
+
+        var log = await context.Set<AuditLog>().SingleAsync(x => x.Operation == "Actualizar identificación");
+        Assert.Contains("Responsable del registro", log.ChangesJson);
+        Assert.Contains("Gestor de prueba", log.ChangesJson);
+        Assert.Contains("Otro responsable", log.ChangesJson);
+        Assert.Contains("Modificó Responsable del registro", log.Description);
     }
 
     [Fact]
@@ -72,7 +99,7 @@ public sealed class GovernanceAuditTests
         await service.UpdateDiagnosticAsync(ficha.Id, Diagnostic("Estado nuevo"));
 
         var logs = await context.Set<AuditLog>()
-            .Where(x => x.Operation == "Actualizar diagnóstico")
+            .Where(x => x.Operation == "Actualizar diagnóstico del ecosistema")
             .ToListAsync();
 
         Assert.Equal(2, logs.Count);
@@ -96,7 +123,7 @@ public sealed class GovernanceAuditTests
         await service.ReplaceOpportunitiesAsync(ficha.Id, [Opportunity("Oportunidad nueva")]);
 
         var logs = await context.Set<AuditLog>()
-            .Where(x => x.Operation == "Actualizar oportunidades")
+            .Where(x => x.Operation == "Actualizar oportunidades de cambio")
             .ToListAsync();
 
         Assert.Equal(2, logs.Count);

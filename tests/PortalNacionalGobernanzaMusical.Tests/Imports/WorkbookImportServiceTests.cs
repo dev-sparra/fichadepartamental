@@ -4,6 +4,7 @@ using PortalNacionalGobernanzaMusical.Application.Common;
 using PortalNacionalGobernanzaMusical.Application.Governance.Blueprint;
 using PortalNacionalGobernanzaMusical.Application.Imports;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
+using PortalNacionalGobernanzaMusical.Infrastructure.Audit;
 using PortalNacionalGobernanzaMusical.Infrastructure.Imports;
 using PortalNacionalGobernanzaMusical.Persistence;
 
@@ -21,6 +22,8 @@ public sealed class WorkbookImportServiceTests
     {
         public string? Email => "gestor@test.gov.co";
         public string? IpAddress => "127.0.0.1";
+        public string? RequestMethod => "POST";
+        public string? RequestPath => "/api/imports/excel";
         public IReadOnlyCollection<string> Roles => ["Gestor Departamental"];
         public bool HasAnyRole(params string[] roles) => roles.Any(r => Roles.Contains(r, StringComparer.OrdinalIgnoreCase));
     }
@@ -65,13 +68,15 @@ public sealed class WorkbookImportServiceTests
     private static WorkbookImportService NewService(ApplicationDbContext context)
     {
         var blueprint = new FichaBlueprintProvider();
+        var currentUser = new FakeCurrentUser();
         return new WorkbookImportService(
             context,
             new CatalogLookupService(context),
             blueprint,
             new WorkbookStructureValidator(blueprint),
             new ImportIssueNarrator(new BlueprintFieldLocator(blueprint)),
-            new FakeCurrentUser());
+            currentUser,
+            new AuditService(context, currentUser));
     }
 
     /// <summary>

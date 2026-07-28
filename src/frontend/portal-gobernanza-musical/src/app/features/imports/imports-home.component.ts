@@ -3,8 +3,8 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
+import { MatDialog } from '@angular/material/dialog';
 import { MatDividerModule } from '@angular/material/divider';
-import { MatExpansionModule } from '@angular/material/expansion';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
@@ -28,12 +28,10 @@ import {
   ImportWorkbookResult
 } from '../../shared/models/import.models';
 import {
-  IMPORT_FLOW_STAGES,
-  ImportStage,
-  ImportStageKey,
-  ImportStageState,
-  resolveFailedStage
-} from './import-flow.constant';
+  ImportProgressDialogComponent,
+  ImportProgressDialogData,
+  ImportProgressOutcome
+} from './import-progress-dialog.component';
 
 interface IssueGroup {
   sheetName: string;
@@ -66,7 +64,6 @@ function toneColor(tone: ImportTone | string): string {
     MatButtonModule,
     MatCardModule,
     MatDividerModule,
-    MatExpansionModule,
     MatIconModule,
     MatProgressBarModule,
     MatSnackBarModule,
@@ -179,35 +176,6 @@ function toneColor(tone: ImportTone | string): string {
               }
             </button>
           </div>
-        </mat-card-content>
-      </mat-card>
-
-      <!-- ── Flujo de la importación ── -->
-      <mat-card class="imp-card">
-        <mat-card-header>
-          <mat-card-title>Flujo de la importación</mat-card-title>
-          <mat-card-subtitle>Qué ocurre con tu archivo, paso a paso</mat-card-subtitle>
-        </mat-card-header>
-        <mat-divider />
-        <mat-card-content>
-          <ol class="flow-list">
-            @for (stage of stages; track stage.key; let index = $index) {
-              <li class="flow-item" [class]="'flow-item--' + stageState(stage.key)">
-                <div class="flow-marker">
-                  <mat-icon>{{ stageIcon(stage) }}</mat-icon>
-                </div>
-                <div class="flow-body">
-                  <strong class="flow-label">{{ index + 1 }}. {{ stage.label }}</strong>
-                  <span class="flow-detail">{{ stage.detail }}</span>
-                  @if (stageState(stage.key) === 'failed') {
-                    <span class="flow-state-note">
-                      La importación se detuvo en esta etapa. No se guardó ningún dato.
-                    </span>
-                  }
-                </div>
-              </li>
-            }
-          </ol>
         </mat-card-content>
       </mat-card>
 
@@ -457,74 +425,6 @@ function toneColor(tone: ImportTone | string): string {
         </mat-card>
       }
 
-      <!-- ── Qué ocurre con los datos ── -->
-      <mat-card class="imp-card">
-        <mat-card-header>
-          <mat-card-title>Qué ocurre con los datos importados</mat-card-title>
-          <mat-card-subtitle>Dónde quedan, cuándo se ven y cuándo se pueden editar</mat-card-subtitle>
-        </mat-card-header>
-        <mat-divider />
-        <mat-card-content>
-          <mat-accordion class="info-accordion" multi>
-            <mat-expansion-panel>
-              <mat-expansion-panel-header>
-                <mat-panel-title>¿Dónde quedan almacenados los datos?</mat-panel-title>
-              </mat-expansion-panel-header>
-              <p>
-                Cada carga guarda primero una copia fiel del archivo (filas de trabajo del lote) y
-                luego materializa la información en la ficha departamental: identificación,
-                diagnóstico del ecosistema, oportunidades de cambio, ejes PNMC y actores, con
-                <strong>todas las filas diligenciadas</strong> de cada hoja.
-              </p>
-              <p>
-                Las hojas de <strong>Indicadores</strong> y <strong>Detalle Indicadores</strong> no
-                se importan: el archivo puede traerlas, pero se ignoran. Esos avances se registran
-                desde el módulo de Indicadores.
-              </p>
-            </mat-expansion-panel>
-
-            <mat-expansion-panel>
-              <mat-expansion-panel-header>
-                <mat-panel-title>¿Qué estado tienen y cuándo se vuelven visibles?</mat-panel-title>
-              </mat-expansion-panel-header>
-              <p>
-                Al terminar una carga con estado <strong>Importación exitosa</strong> o
-                <strong>Importación completada con observaciones</strong>, la ficha queda visible de
-                inmediato en el módulo de Gobernanza con el estado de revisión
-                <strong>Pendiente</strong>, para que el Líder de Gobernanza la apruebe o la devuelva.
-                Si la carga se <strong>rechaza</strong>, no se crea ni se modifica ninguna ficha.
-              </p>
-            </mat-expansion-panel>
-
-            <mat-expansion-panel>
-              <mat-expansion-panel-header>
-                <mat-panel-title>¿Cuándo se pueden editar?</mat-panel-title>
-              </mat-expansion-panel-header>
-              <p>
-                Desde que quedan visibles. El Gestor Departamental puede ajustar cualquier sección
-                en el módulo de Gobernanza y volver a guardar; el Líder de Gobernanza revisa y
-                aprueba o devuelve la ficha, y el gestor recibe una notificación con el cambio de
-                estado. Volver a cargar el mismo archivo actualiza la ficha del mismo departamento
-                y fecha de levantamiento en lugar de duplicarla.
-              </p>
-            </mat-expansion-panel>
-
-            <mat-expansion-panel>
-              <mat-expansion-panel-header>
-                <mat-panel-title>¿Qué pasa si hay errores parciales?</mat-panel-title>
-              </mat-expansion-panel-header>
-              <p>
-                La importación es parcial: <strong>las filas correctas sí se guardan</strong> y solo
-                quedan fuera las filas con errores, que se listan arriba con la corrección exacta.
-                El lote queda como <strong>Importación completada con observaciones</strong>. La
-                excepción es la hoja Identificación: si esa fila tiene errores no puede crearse la
-                ficha. Al corregir el archivo y cargarlo de nuevo, la ficha se completa sin duplicar
-                datos.
-              </p>
-            </mat-expansion-panel>
-          </mat-accordion>
-        </mat-card-content>
-      </mat-card>
     </section>
   `,
   styles: [
@@ -711,106 +611,6 @@ function toneColor(tone: ImportTone | string): string {
         to {
           transform: rotate(360deg);
         }
-      }
-
-      /* ── Flujo ── */
-      .flow-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .flow-item {
-        display: flex;
-        gap: var(--space-4);
-        padding-bottom: var(--space-5);
-        position: relative;
-      }
-
-      .flow-item:not(:last-child)::before {
-        content: '';
-        position: absolute;
-        left: 17px;
-        top: 36px;
-        bottom: 0;
-        width: 2px;
-        background: var(--color-border-light);
-      }
-
-      .flow-marker {
-        flex-shrink: 0;
-        width: 36px;
-        height: 36px;
-        border-radius: var(--radius-full);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--color-surface-container-low);
-        border: 1px solid var(--color-border-light);
-        color: var(--color-on-surface-variant);
-        z-index: 1;
-      }
-
-      .flow-marker .mat-icon {
-        font-size: 20px;
-        width: 20px;
-        height: 20px;
-      }
-
-      .flow-item--done .flow-marker {
-        background: var(--color-success-bg);
-        border-color: var(--color-success-border);
-        color: var(--color-success-text);
-      }
-
-      .flow-item--warning .flow-marker {
-        background: var(--color-warning-bg);
-        border-color: var(--color-warning-border);
-        color: var(--color-warning-text);
-      }
-
-      .flow-item--active .flow-marker {
-        background: var(--color-primary-100);
-        border-color: var(--color-primary-300);
-        color: var(--color-primary-700);
-      }
-
-      .flow-item--failed .flow-marker {
-        background: var(--color-error-bg);
-        border-color: var(--color-error-border);
-        color: var(--color-error-text);
-      }
-
-      .flow-body {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        padding-top: var(--space-1);
-      }
-
-      .flow-label {
-        font-size: var(--font-size-body-sm);
-        color: var(--color-on-surface);
-      }
-
-      .flow-detail {
-        font-size: var(--font-size-caption);
-        color: var(--color-on-surface-secondary);
-        line-height: 1.5;
-      }
-
-      .flow-state-note {
-        margin-top: var(--space-1);
-        font-size: var(--font-size-caption);
-        font-weight: var(--font-weight-semibold);
-        color: var(--color-error-text);
-      }
-
-      .flow-item--pending .flow-label,
-      .flow-item--pending .flow-detail {
-        opacity: 0.65;
       }
 
       /* ── Resultado ── */
@@ -1201,14 +1001,6 @@ function toneColor(tone: ImportTone | string): string {
         overflow-x: auto;
       }
 
-      /* ── Panel informativo ── */
-      .info-accordion p {
-        margin: 0;
-        font-size: var(--font-size-body-sm);
-        color: var(--color-on-surface-secondary);
-        line-height: 1.7;
-      }
-
       /* ── Vacíos ── */
       .imp-empty {
         display: flex;
@@ -1269,11 +1061,11 @@ export class ImportsHomeComponent {
   private readonly importsApiService = inject(ImportsApiService);
   private readonly snackBar = inject(MatSnackBar);
   private readonly confirmDialog = inject(ConfirmDialogService);
+  private readonly dialog = inject(MatDialog);
   private readonly authTokenService = inject(AuthTokenService);
 
   readonly officialFileName = OFFICIAL_IMPORT_FILE_NAME;
   readonly maxFileSizeMb = MAX_IMPORT_FILE_SIZE_BYTES / 1024 / 1024;
-  readonly stages: ImportStage[] = IMPORT_FLOW_STAGES;
 
   readonly loading = signal(false);
   readonly message = signal('');
@@ -1288,9 +1080,6 @@ export class ImportsHomeComponent {
   readonly selectedBatch = signal<ImportBatchSummary | null>(null);
   readonly lastResult = signal<ImportWorkbookResult | null>(null);
   readonly severityFilter = signal<'all' | 'Error' | 'Warning'>('all');
-
-  /** Etapa en la que se detuvo el flujo (rechazo por formato, estructura, datos o proceso). */
-  private readonly failedStage = signal<ImportStageKey | null>(null);
 
   /** Solo el Administrador puede eliminar lotes de importación. */
   readonly canDelete = computed(() => this.authTokenService.hasAnyRole([AppRoles.Administrador]));
@@ -1365,7 +1154,6 @@ export class ImportsHomeComponent {
   clearFile(): void {
     this.selectedFile.set(null);
     this.clearMessage();
-    this.failedStage.set(null);
   }
 
   upload(): void {
@@ -1381,39 +1169,52 @@ export class ImportsHomeComponent {
 
     this.loading.set(true);
     this.clearMessage();
-    this.failedStage.set(null);
     this.lastResult.set(null);
 
-    this.importsApiService
-      .importExcel(file)
-      .pipe(finalize(() => this.loading.set(false)))
-      .subscribe({
-        next: (result) => {
-          this.lastResult.set(result);
-          this.issues.set(result.issues);
-          this.severityFilter.set('all');
-          this.selectedBatch.set(null);
+    // El flujo solo se muestra aquí: la modal acompaña la carga y se cierra con el resultado.
+    this.dialog
+      .open<ImportProgressDialogComponent, ImportProgressDialogData, ImportProgressOutcome>(
+        ImportProgressDialogComponent,
+        {
+          data: { fileName: file.name, request$: this.importsApiService.importExcel(file) },
+          disableClose: true,
+          autoFocus: false,
+          restoreFocus: true,
+          panelClass: 'import-progress-dialog-panel'
+        }
+      )
+      .afterClosed()
+      .subscribe((outcome) => {
+        this.loading.set(false);
+        if (!outcome) return;
 
-          if (!result.accepted) {
-            this.failedStage.set(resolveFailedStage(result.issues.map((issue) => issue.errorCode)));
-            this.setMessage('error', result.statusLabel, result.statusNextStep);
-          } else if (result.invalidRowCount > 0 || result.warningCount > 0) {
-            this.setMessage('warning', result.statusLabel, result.statusNextStep);
-          } else {
-            this.setMessage('success', result.statusLabel, result.statusNextStep);
-            this.selectedFile.set(null);
-          }
-
-          this.refreshBatches();
-        },
-        error: (err: HttpErrorResponse) => {
-          this.failedStage.set('format');
+        if (outcome.kind === 'error') {
           this.setMessage(
             'error',
-            extractErrorMessage(err, 'No fue posible cargar el archivo.'),
+            extractErrorMessage(outcome.error, 'No fue posible cargar el archivo.'),
             `Verifique que esté usando el archivo oficial ${OFFICIAL_IMPORT_FILE_NAME} e intente de nuevo.`
           );
+          return;
         }
+
+        const result = outcome.result;
+        this.lastResult.set(result);
+        this.issues.set(result.issues);
+        this.severityFilter.set('all');
+        this.selectedBatch.set(null);
+
+        // El estado lo decide el servidor (statusTone): hay observaciones que solo aparecen al
+        // guardar y no quedan reflejadas en los contadores de filas.
+        if (!result.accepted) {
+          this.setMessage('error', result.statusLabel, result.statusNextStep);
+        } else if (result.statusTone !== 'success') {
+          this.setMessage('warning', result.statusLabel, result.statusNextStep);
+        } else {
+          this.setMessage('success', result.statusLabel, result.statusNextStep);
+          this.selectedFile.set(null);
+        }
+
+        this.refreshBatches();
       });
   }
 
@@ -1480,50 +1281,6 @@ export class ImportsHomeComponent {
       });
   }
 
-  /** Estado visual de cada etapa del flujo según lo que va ocurriendo con la carga. */
-  stageState(key: ImportStageKey): ImportStageState {
-    const failed = this.failedStage();
-    const result = this.lastResult();
-    const order = this.stages.map((stage) => stage.key);
-    const index = order.indexOf(key);
-
-    if (failed) {
-      const failedIndex = order.indexOf(failed);
-      if (index < failedIndex) return 'done';
-      return index === failedIndex ? 'failed' : 'pending';
-    }
-
-    if (this.loading()) {
-      // Durante la carga el servidor recorre formato → estructura → datos → lote → proceso.
-      return index === 0 ? 'done' : index <= order.indexOf('processing') ? 'active' : 'pending';
-    }
-
-    if (result?.accepted) {
-      const withObservations = result.invalidRowCount > 0 || result.warningCount > 0;
-      if (key === 'available') {
-        return result.persistedRecordCount > 0 ? (withObservations ? 'warning' : 'done') : 'pending';
-      }
-      if (key === 'completed') {
-        return withObservations ? 'warning' : 'done';
-      }
-      return 'done';
-    }
-
-    if (this.selectedFile()) {
-      return index === 0 ? 'done' : index === 1 ? 'active' : 'pending';
-    }
-
-    return 'pending';
-  }
-
-  stageIcon(stage: ImportStage): string {
-    const state = this.stageState(stage.key);
-    if (state === 'done') return 'check';
-    if (state === 'failed') return 'close';
-    if (state === 'warning') return 'priority_high';
-    return stage.icon;
-  }
-
   batchIcon(batch: ImportBatchSummary): string {
     switch (batch.statusTone) {
       case 'success':
@@ -1556,7 +1313,6 @@ export class ImportsHomeComponent {
 
   /** Rechazo detectado en el navegador: no se envía nada al servidor. */
   private rejectLocally(message: string, hint: string): void {
-    this.failedStage.set('format');
     this.lastResult.set(null);
     this.setMessage('error', message, hint);
   }
@@ -1575,7 +1331,6 @@ export class ImportsHomeComponent {
 
     this.selectedFile.set(file);
     this.clearMessage();
-    this.failedStage.set(null);
     this.lastResult.set(null);
   }
 

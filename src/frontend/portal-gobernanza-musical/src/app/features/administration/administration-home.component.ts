@@ -1,5 +1,4 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -19,9 +18,8 @@ import { UserFormDialogComponent, UserFormDialogResult } from './user-form-dialo
 import { ResetPasswordDialogComponent } from './reset-password-dialog.component';
 import { CatalogManageDialogComponent } from './catalog-manage-dialog.component';
 import { CatalogsApiService } from './services/catalogs-api.service';
-import { AuditApiService } from '../../core/services/audit-api.service';
+import { AuditLogPanelComponent } from './audit-log-panel.component';
 import { CatalogDefinition } from '../../shared/models/catalog.models';
-import { AuditLog } from '../../shared/models/audit.models';
 import { extractErrorMessage } from '../../shared/utils/extract-error-message.util';
 import { ConfirmDialogService } from '../../shared/services/confirm-dialog.service';
 
@@ -35,7 +33,6 @@ interface CatalogEntry {
   selector: 'app-administration-home',
   standalone: true,
   imports: [
-    DatePipe,
     ReactiveFormsModule,
     MatButtonModule,
     MatCardModule,
@@ -45,7 +42,8 @@ interface CatalogEntry {
     MatInputModule,
     MatProgressBarModule,
     MatSnackBarModule,
-    MatTabsModule
+    MatTabsModule,
+    AuditLogPanelComponent
   ],
   template: `
     <section class="admin-page">
@@ -211,54 +209,11 @@ interface CatalogEntry {
         <!-- Audit tab -->
         <mat-tab label="Auditoría">
           <div class="tab-content">
-            <mat-card class="table-card">
-              @if (auditLoading()) {
-                <mat-progress-bar mode="indeterminate" class="card-progress" />
-              }
-
-              <div class="table-responsive">
-                <table class="data-table">
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Usuario</th>
-                      <th>Entidad</th>
-                      <th>Operación</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    @for (log of auditLogs(); track log.id) {
-                      <tr>
-                        <td>{{ log.timestampUtc | date: 'medium' }}</td>
-                        <td>{{ log.userDisplayName }}</td>
-                        <td>{{ log.entityName }}</td>
-                        <td>
-                          <span class="role-badge">{{ log.operation }}</span>
-                        </td>
-                      </tr>
-                    }
-                  </tbody>
-                </table>
-              </div>
-
-              @if (auditLogs().length === 0 && !auditLoading()) {
-                <div class="empty-state">
-                  <div class="empty-icon-box">
-                    <mat-icon>history_edu</mat-icon>
-                  </div>
-                  <h3 class="empty-title">Sin registros de auditoría</h3>
-                  <p class="empty-desc">Las acciones administrativas aparecerán aquí a medida que se realicen.</p>
-                </div>
-              }
-
-              @if (auditLogs().length > 0) {
-                <div class="audit-load-more">
-                  <button mat-stroked-button type="button" (click)="loadMoreAuditLogs()" [disabled]="auditLoading()">
-                    Cargar más
-                  </button>
-                </div>
-              }
-            </mat-card>
+            <p class="tab-intro">
+              Todo lo que se hace en el portal queda registrado: quién, cuándo, en qué módulo, sobre
+              qué objeto y qué cambió exactamente. Selecciona una fila para ver el detalle.
+            </p>
+            <app-audit-log-panel />
           </div>
         </mat-tab>
       </mat-tab-group>
@@ -629,10 +584,12 @@ interface CatalogEntry {
       }
 
       /* ── Audit ── */
-      .audit-load-more {
-        display: flex;
-        justify-content: center;
-        padding: var(--space-4);
+      .tab-intro {
+        margin: 0 0 var(--space-4);
+        font-size: var(--font-size-body-sm);
+        color: var(--color-on-surface-secondary);
+        line-height: 1.6;
+        max-width: 760px;
       }
 
       /* ── Responsive ── */
@@ -668,14 +625,8 @@ export class AdministrationHomeComponent {
   private readonly catalogsApi = inject(CatalogsApiService);
   private readonly fb = inject(FormBuilder);
   private readonly snackBar = inject(MatSnackBar);
-  private readonly auditApi = inject(AuditApiService);
   private readonly dialog = inject(MatDialog);
   private readonly confirmDialog = inject(ConfirmDialogService);
-
-  readonly auditLogs = signal<AuditLog[]>([]);
-  readonly auditLoading = signal(false);
-  private auditPage = 1;
-  private readonly auditPageSize = 25;
 
   readonly userSearch = this.fb.control('');
   readonly catalogSearch = this.fb.control('');
@@ -694,29 +645,9 @@ export class AdministrationHomeComponent {
   constructor() {
     this.loadUsers();
     this.loadCatalogs();
-    this.loadAuditLogs();
 
     this.userSearch.valueChanges.subscribe((t) => this.applyUserFilter(t ?? ''));
     this.catalogSearch.valueChanges.subscribe((t) => this.applyCatalogFilter(t ?? ''));
-  }
-
-  loadMoreAuditLogs(): void {
-    this.auditPage += 1;
-    this.loadAuditLogs(true);
-  }
-
-  private loadAuditLogs(append = false): void {
-    this.auditLoading.set(true);
-    this.auditApi
-      .getLogs({ page: this.auditPage, pageSize: this.auditPageSize })
-      .pipe(finalize(() => this.auditLoading.set(false)))
-      .subscribe({
-        next: (logs) => {
-          this.auditLogs.set(append ? [...this.auditLogs(), ...logs] : logs);
-        },
-        error: (err: HttpErrorResponse) =>
-          this.snackBar.open(extractErrorMessage(err, 'Error al cargar el historial de auditoría'), 'Cerrar', { duration: 5000 })
-      });
   }
 
   openCreate(): void {

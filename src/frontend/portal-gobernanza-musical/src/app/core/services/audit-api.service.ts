@@ -2,7 +2,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 
 import { AppConfigService } from './app-config.service';
-import { AuditLog, AuditLogQuery } from '../../shared/models/audit.models';
+import { AuditFilterOptions, AuditLogPage, AuditLogQuery } from '../../shared/models/audit.models';
 
 @Injectable({ providedIn: 'root' })
 export class AuditApiService {
@@ -11,13 +11,30 @@ export class AuditApiService {
 
   getLogs(query: AuditLogQuery) {
     let params = new HttpParams().set('page', query.page).set('pageSize', query.pageSize);
-    if (query.entityName) {
-      params = params.set('entityName', query.entityName);
-    }
-    if (query.entityId) {
-      params = params.set('entityId', query.entityId);
+
+    // Solo viajan los filtros con valor: así la URL refleja lo que el usuario eligió.
+    const optional: [string, string | null | undefined][] = [
+      ['module', query.module],
+      ['userEmail', query.userEmail],
+      ['operation', query.operation],
+      ['entityName', query.entityName],
+      ['entityId', query.entityId],
+      ['result', query.result],
+      ['search', query.search],
+      ['from', query.from],
+      ['to', query.to]
+    ];
+
+    for (const [key, value] of optional) {
+      if (value) {
+        params = params.set(key, value);
+      }
     }
 
-    return this.http.get<AuditLog[]>(`${this.appConfigService.apiBaseUrl}/audit`, { params });
+    return this.http.get<AuditLogPage>(`${this.appConfigService.apiBaseUrl}/audit`, { params });
+  }
+
+  getFilterOptions() {
+    return this.http.get<AuditFilterOptions>(`${this.appConfigService.apiBaseUrl}/audit/filters`);
   }
 }

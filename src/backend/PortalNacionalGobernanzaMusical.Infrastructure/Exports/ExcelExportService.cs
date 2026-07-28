@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Application.Exports;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
 using PortalNacionalGobernanzaMusical.Persistence;
@@ -11,7 +12,10 @@ namespace PortalNacionalGobernanzaMusical.Infrastructure.Exports;
 /// las hojas del Líder (Indicadores, Detalle) se cablearán junto con ese módulo — el escritor ya es
 /// genérico y las soporta.
 /// </summary>
-public sealed class ExcelExportService(ApplicationDbContext dbContext, IFichaWorkbookWriter workbookWriter) : IExcelExportService
+public sealed class ExcelExportService(
+    ApplicationDbContext dbContext,
+    IFichaWorkbookWriter workbookWriter,
+    IAuditService auditService) : IExcelExportService
 {
     private const string MultiSeparator = ", ";
 
@@ -54,7 +58,25 @@ public sealed class ExcelExportService(ApplicationDbContext dbContext, IFichaWor
             sheets.Insert(1, diagnostico);
         }
 
-        return workbookWriter.Write(sheets);
+        var workbook = workbookWriter.Write(sheets);
+
+        // Descargar la ficha saca información del portal: queda registrado quién se la llevó.
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Reportes,
+            EntityName = nameof(FichaDepartamental),
+            EntityId = ficha.Id,
+            EntityLabel = $"ficha de {ficha.Department?.Name} · {ficha.FechaLevantamiento:dd/MM/yyyy}",
+            Operation = "Descargar ficha en Excel",
+            Description = $"Descargó en Excel la ficha departamental de {ficha.Department?.Name} con fecha de levantamiento {ficha.FechaLevantamiento:dd/MM/yyyy}.",
+            Changes = new AuditChangeSet()
+                .Track("oportunidades", "Oportunidades exportadas", null, ficha.OportunidadesCambio.Count)
+                .Track("ejes", "Ejes exportados", null, ficha.EjesPnmc.Count)
+                .Track("actores", "Actores exportados", null, ficha.Actores.Count)
+                .Changes
+        }, cancellationToken);
+
+        return workbook;
     }
 
     private static FichaExportSheet BuildIdentificacion(FichaDepartamental ficha)

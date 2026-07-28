@@ -19,6 +19,11 @@ si hay errores parciales.
 
 ## 1. Etapas del flujo
 
+En el portal estas etapas se muestran al pulsar **Cargar y validar**, dentro de una ventana de
+progreso que acompaña la carga y termina mostrando el resultado real: el estado alcanzado, la etapa
+en la que se detuvo si fue rechazada y el siguiente paso.
+
+
 | # | Etapa | Qué hace el sistema | Resultado si falla |
 |---|-------|---------------------|--------------------|
 | 1 | **Archivo seleccionado** | El usuario elige o arrastra el archivo. El navegador valida extensión y tamaño antes de subirlo. | No se envía nada al servidor. Mensaje inmediato con la corrección. |

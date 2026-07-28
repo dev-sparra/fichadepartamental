@@ -13,6 +13,10 @@ public sealed class CurrentUserService(IHttpContextAccessor httpContextAccessor)
     public string? IpAddress =>
         httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString();
 
+    public string? RequestMethod => httpContextAccessor.HttpContext?.Request.Method;
+
+    public string? RequestPath => httpContextAccessor.HttpContext?.Request.Path.Value;
+
     public IReadOnlyCollection<string> Roles
     {
         get

@@ -88,12 +88,25 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             entity.HasKey(x => x.Id);
             entity.Property(x => x.UserEmail).HasMaxLength(200).IsRequired();
             entity.Property(x => x.UserDisplayName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.UserRoles).HasMaxLength(300);
             entity.Property(x => x.IpAddress).HasMaxLength(64);
+            entity.Property(x => x.Module).HasMaxLength(60).IsRequired();
             entity.Property(x => x.EntityName).HasMaxLength(100).IsRequired();
-            entity.Property(x => x.Operation).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.EntityKey).HasMaxLength(100);
+            entity.Property(x => x.EntityLabel).HasMaxLength(400);
+            entity.Property(x => x.Operation).HasMaxLength(80).IsRequired();
+            entity.Property(x => x.Description).HasColumnType("longtext");
+            entity.Property(x => x.Result).HasMaxLength(20).IsRequired();
+            entity.Property(x => x.ChangesJson).HasColumnType("longtext");
+            entity.Property(x => x.RequestMethod).HasMaxLength(10);
+            entity.Property(x => x.RequestPath).HasMaxLength(300);
             entity.Property(x => x.OldValuesJson).HasColumnType("longtext");
             entity.Property(x => x.NewValuesJson).HasColumnType("longtext");
             entity.HasIndex(x => new { x.EntityName, x.EntityId });
+            // El historial se consulta por fecha y se filtra por módulo y por usuario.
+            entity.HasIndex(x => x.CreatedAtUtc);
+            entity.HasIndex(x => x.Module);
+            entity.HasIndex(x => x.UserEmail);
         });
     }
 
@@ -545,6 +558,14 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             entity.Property("ImportBatchId");
             entity.Property("SourceRowNumber").IsRequired();
             entity.HasIndex("ImportBatchId");
+            // La fila de trabajo pertenece al lote. Sin declarar la relación, EF Core no sabe que
+            // esta tabla depende de import_batches y ordena los DELETE por nombre de tabla: el
+            // lote se borraba antes que sus filas y la llave foránea de la base de datos rechazaba
+            // la operación al eliminar una carga del historial.
+            entity.HasOne<ImportBatch>()
+                .WithMany()
+                .HasForeignKey("ImportBatchId")
+                .OnDelete(DeleteBehavior.Cascade);
             configure(entity);
         });
     }

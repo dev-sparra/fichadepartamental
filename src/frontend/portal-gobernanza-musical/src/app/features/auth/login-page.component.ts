@@ -165,7 +165,7 @@ import { AuthTokenService } from '../../core/services/auth-token.service';
 
           <p class="login-support">
             ¿Necesitas ayuda? Contacta a
-            <a href="mailto:plandemusica@mincultura.gov.co">plandemusica&#64;mincultura.gov.co</a>
+            <a href="mailto:simus@mincultura.gov.co">simus&#64;mincultura.gov.co</a>
           </p>
         </div>
       </section>

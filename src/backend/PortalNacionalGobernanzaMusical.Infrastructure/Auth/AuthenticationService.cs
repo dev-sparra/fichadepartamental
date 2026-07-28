@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
+using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Application.Auth;
 using PortalNacionalGobernanzaMusical.Domain.Entities;
 using PortalNacionalGobernanzaMusical.Persistence;
@@ -13,8 +14,11 @@ namespace PortalNacionalGobernanzaMusical.Infrastructure.Auth;
 
 public sealed class AuthenticationService(
     ApplicationDbContext dbContext,
-    IOptions<JwtSettings> jwtOptions) : IAuthenticationService
+    IOptions<JwtSettings> jwtOptions,
+    IAuditService auditService) : IAuthenticationService
 {
+    private const string EntityName = nameof(UserAccount);
+
     private readonly PasswordHasher<UserAccount> passwordHasher = new();
 
     public async Task<AuthenticatedUserResult?> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
@@ -27,12 +31,15 @@ public sealed class AuthenticationService(
 
         if (user is null || string.IsNullOrWhiteSpace(user.PasswordHash))
         {
+            // Se registra el intento sin revelar si el problema fue el correo o la contraseña.
+            await LogFailedLoginAsync(request.Email, "El usuario no existe o está inactivo.", cancellationToken);
             return null;
         }
 
         var verification = passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
         if (verification == PasswordVerificationResult.Failed)
         {
+            await LogFailedLoginAsync(request.Email, "La contraseña no es correcta.", cancellationToken, user.Id);
             return null;
         }
 
@@ -59,6 +66,19 @@ public sealed class AuthenticationService(
             Expires = expiresAtUtc,
             SigningCredentials = credentials
         };
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Autenticacion,
+            EntityName = EntityName,
+            EntityId = user.Id,
+            EntityLabel = DescribeUser(user.DisplayName, user.Email),
+            Operation = "Ingreso al portal",
+            Description = roles.Length > 0
+                ? $"Ingresó al portal como {string.Join(", ", roles)}."
+                : "Ingresó al portal.",
+            UserEmailOverride = user.Email
+        }, cancellationToken);
 
         return new AuthenticatedUserResult(
             new JsonWebTokenHandler().CreateToken(tokenDescriptor),
@@ -91,5 +111,43 @@ public sealed class AuthenticationService(
         user.MustChangePassword = false;
         user.UpdatedAtUtc = DateTime.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        var changes = new AuditChangeSet().TrackSecret("password", "Contraseña");
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Autenticacion,
+            EntityName = EntityName,
+            EntityId = user.Id,
+            EntityLabel = DescribeUser(user.DisplayName, user.Email),
+            Operation = "Cambio de contraseña",
+            Description = "Cambió su propia contraseña de acceso al portal.",
+            Changes = changes.Changes,
+            UserEmailOverride = user.Email
+        }, cancellationToken);
     }
+
+    /// <summary>
+    /// Deja constancia de un intento de ingreso que no prosperó. Queda a nombre del correo que se
+    /// escribió, aunque no corresponda a ningún usuario: es justo lo que interesa revisar.
+    /// </summary>
+    private async Task LogFailedLoginAsync(string email, string motivo, CancellationToken cancellationToken, Guid? userId = null)
+    {
+        var attempted = email.Trim();
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Autenticacion,
+            EntityName = EntityName,
+            EntityId = userId,
+            EntityLabel = attempted,
+            Operation = "Intento de ingreso fallido",
+            Description = $"No pudo ingresar al portal con el correo \"{attempted}\". {motivo}",
+            Result = AuditResults.Fallido,
+            UserEmailOverride = attempted
+        }, cancellationToken);
+    }
+
+    private static string DescribeUser(string? displayName, string email) =>
+        string.IsNullOrWhiteSpace(displayName) ? email : $"{displayName} ({email})";
 }

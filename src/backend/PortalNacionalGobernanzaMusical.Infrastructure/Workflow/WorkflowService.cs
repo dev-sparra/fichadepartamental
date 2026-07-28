@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using PortalNacionalGobernanzaMusical.Application.Audit;
 using PortalNacionalGobernanzaMusical.Application.Common;
 using PortalNacionalGobernanzaMusical.Application.Notifications;
 using PortalNacionalGobernanzaMusical.Application.Workflow;
@@ -10,7 +11,8 @@ namespace PortalNacionalGobernanzaMusical.Infrastructure.Workflow;
 public sealed class WorkflowService(
     ApplicationDbContext dbContext,
     ICurrentUserService currentUserService,
-    INotificationService notificationService) : IWorkflowService
+    INotificationService notificationService,
+    IAuditService auditService) : IWorkflowService
 {
     private const string StatusAprobado = "Aprobado";
     private const string StatusDevuelto = "Devuelto";
@@ -58,6 +60,7 @@ public sealed class WorkflowService(
     {
         var email = currentUserService.Email ?? "sistema";
         var displayName = await ResolveDisplayNameAsync(email, cancellationToken);
+        var previous = await GetStatusAsync(fichaId, cancellationToken);
 
         var record = new ApprovalRecord
         {
@@ -73,8 +76,64 @@ public sealed class WorkflowService(
         await dbContext.SaveChangesAsync(cancellationToken);
 
         await NotifyGestorAsync(fichaId, status, comment, displayName, cancellationToken);
+        await LogApprovalAsync(fichaId, previous.Status, status, comment, cancellationToken);
 
         return new FichaApprovalStatusDto(fichaId, status, record.ReviewedByName, record.ReviewedAtUtc, record.Comment);
+    }
+
+    private async Task LogApprovalAsync(
+        Guid fichaId,
+        string previousStatus,
+        string status,
+        string? comment,
+        CancellationToken cancellationToken)
+    {
+        var label = await DescribeFichaAsync(fichaId, cancellationToken);
+        var approved = status == StatusAprobado;
+        var motivo = string.IsNullOrWhiteSpace(comment)
+            ? " No dejó observaciones."
+            : $" Observación: \"{comment.Trim()}\".";
+
+        await auditService.LogAsync(new AuditEntry
+        {
+            Module = AuditModules.Aprobaciones,
+            EntityName = nameof(FichaDepartamental),
+            EntityId = fichaId,
+            EntityLabel = label,
+            Operation = approved ? "Aprobar ficha" : "Devolver ficha",
+            Description = approved
+                ? $"Aprobó la {label}.{motivo}"
+                : $"Devolvió la {label} para ajustes.{motivo}",
+            Changes = new AuditChangeSet()
+                .Track("status", "Estado de revisión", previousStatus, status)
+                .Track("comment", "Observación del revisor", null, comment)
+                .Changes
+        }, cancellationToken);
+    }
+
+    /// <summary>Nombre de la ficha en palabras, para leer el historial sin abrirla.</summary>
+    private async Task<string> DescribeFichaAsync(Guid fichaId, CancellationToken cancellationToken)
+    {
+        // El departamento se busca aparte del resto de la ficha: aunque el catálogo no lo tuviera,
+        // el registro debe seguir diciendo de qué ficha se trata.
+        var ficha = await dbContext.FichasDepartamentales.AsNoTracking()
+            .Where(x => x.Id == fichaId)
+            .Select(x => new { x.DepartmentId, x.FechaLevantamiento })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (ficha is null)
+        {
+            return $"ficha {fichaId}";
+        }
+
+        var departmentName = await dbContext.Departments.AsNoTracking()
+            .Where(x => x.Id == ficha.DepartmentId)
+            .Select(x => x.Name)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return string.IsNullOrWhiteSpace(departmentName)
+            ? $"ficha del {ficha.FechaLevantamiento:dd/MM/yyyy}"
+            : $"ficha de {departmentName} · {ficha.FechaLevantamiento:dd/MM/yyyy}";
     }
 
     /// <summary>
